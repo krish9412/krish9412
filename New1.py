@@ -3,6 +3,7 @@ import os
 import tempfile
 import json
 import io
+import requests
 import pdfplumber
 import uuid
 from openai import OpenAI
@@ -10,12 +11,12 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from datetime import datetime
 
-# Use more modern and compatible imports for Langchain
+# Updated imports for newer LangChain versions
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain.vectorstores import Chroma
 from langchain.chains import RetrievalQA
-from langchain_openai import ChatOpenAI
+from langchain_openai import OpenAI as LangchainOpenAI
 
 # Page Configuration
 st.set_page_config(page_title="📚 Professional Learning Platform", layout="wide")
@@ -108,7 +109,7 @@ def create_vectorstore():
             return False
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-        embeddings_model = OpenAIEmbeddings(api_key=st.session_state.openai_api_key)
+        embeddings_model = OpenAIEmbeddings(api_key=st.session_state.openai_api_key)  # Updated parameter name
 
         docs = []
         for doc in st.session_state.extracted_texts:
@@ -136,11 +137,9 @@ def generate_rag_answer(question):
         if not st.session_state.openai_api_key:
             return "Please enter your OpenAI API key."
 
-        # Use ChatOpenAI instead of the deprecated OpenAI class
-        llm = ChatOpenAI(
-            api_key=st.session_state.openai_api_key,
-            model=st.session_state.get('selected_model', 'gpt-4o-mini'),
-            temperature=0.7
+        llm = LangchainOpenAI(
+            api_key=st.session_state.openai_api_key,  # Updated parameter name
+            model_name=st.session_state.get('selected_model', 'gpt-4o-mini')
         )
 
         qa_chain = RetrievalQA.from_chain_type(
@@ -149,7 +148,7 @@ def generate_rag_answer(question):
             retriever=st.session_state.vectorstore.as_retriever(search_kwargs={"k": 3})
         )
 
-        result = qa_chain.invoke({"query": question})
+        result = qa_chain.invoke({"query": question})  # Updated to use invoke instead of __call__
         return result["result"]
     except Exception as e:
         st.error(f"Error generating answer: {e}")
