@@ -3,7 +3,6 @@ import os
 import tempfile
 import json
 import io
-import requests
 import pdfplumber
 import uuid
 from openai import OpenAI
@@ -11,11 +10,12 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from datetime import datetime
 
+# Use more modern and compatible imports for Langchain
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import Chroma
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
-from langchain.llms import OpenAI as LangchainOpenAI
+from langchain_openai import ChatOpenAI
 
 # Page Configuration
 st.set_page_config(page_title="📚 Professional Learning Platform", layout="wide")
@@ -108,7 +108,7 @@ def create_vectorstore():
             return False
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-        embeddings_model = OpenAIEmbeddings(openai_api_key=st.session_state.openai_api_key)
+        embeddings_model = OpenAIEmbeddings(api_key=st.session_state.openai_api_key)
 
         docs = []
         for doc in st.session_state.extracted_texts:
@@ -136,9 +136,11 @@ def generate_rag_answer(question):
         if not st.session_state.openai_api_key:
             return "Please enter your OpenAI API key."
 
-        llm = LangchainOpenAI(
-            openai_api_key=st.session_state.openai_api_key,
-            model_name=st.session_state.get('selected_model', 'gpt-4o-mini')
+        # Use ChatOpenAI instead of the deprecated OpenAI class
+        llm = ChatOpenAI(
+            api_key=st.session_state.openai_api_key,
+            model=st.session_state.get('selected_model', 'gpt-4o-mini'),
+            temperature=0.7
         )
 
         qa_chain = RetrievalQA.from_chain_type(
@@ -147,7 +149,7 @@ def generate_rag_answer(question):
             retriever=st.session_state.vectorstore.as_retriever(search_kwargs={"k": 3})
         )
 
-        result = qa_chain({"query": question})
+        result = qa_chain.invoke({"query": question})
         return result["result"]
     except Exception as e:
         st.error(f"Error generating answer: {e}")
@@ -187,7 +189,7 @@ def perform_course_generation():
         Create an engaging, thorough and well-structured course by:
         1. Analyzing all provided documents and identifying common themes, complementary concepts, and unique insights from each source
         2. Creating an inspiring course title that reflects the integrated knowledge from all documents
-        3. Writing a detailed course description (at least 500 words) that explains how the course synthesizes information from multiple sources
+        3. Writing a detailed course description (at least 300 words) that explains how the course synthesizes information from multiple sources
         4. Developing 5-8 comprehensive modules that build upon each other in a logical sequence
         5. Providing 4-6 clear learning objectives for each module with specific examples and practical applications
         6. Creating detailed, well-explained content for each module (at least 500 words per module) including:
@@ -196,7 +198,7 @@ def perform_course_generation():
            - Visual explanations where appropriate
            - Step-by-step guides for complex procedures
            - Comparative analysis when sources present different perspectives
-        7. Including a quiz with 3-6 thought-provoking questions per module for better understanding
+        7. Including a quiz with 3-5 thought-provoking questions per module for better understanding
 
         Return the response in the following JSON format:
         {{
@@ -227,7 +229,7 @@ def perform_course_generation():
 
         client = OpenAI(api_key=st.session_state.openai_api_key)
         response = client.chat.completions.create(
-            model=st.session_state.get('selected_model', 'gpt-4.1-nano'),
+            model=st.session_state.get('selected_model', 'gpt-4o-mini'),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             temperature=0.7
