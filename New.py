@@ -14,7 +14,7 @@ from datetime import datetime
 # Import langchain components - updated imports for newer versions
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import ChromaDB
 from langchain.chains import RetrievalQA
 from langchain_openai import OpenAI as LangchainOpenAI
 
