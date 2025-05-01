@@ -187,7 +187,7 @@ def perform_course_generation():
         Create an engaging, thorough and well-structured course by:
         1. Analyzing all provided documents and identifying common themes, complementary concepts, and unique insights from each source
         2. Creating an inspiring course title that reflects the integrated knowledge from all documents
-        3. Writing a detailed course description (at least 300 words) that explains how the course synthesizes information from multiple sources
+        3. Writing a detailed course description (at least 500 words) that explains how the course synthesizes information from multiple sources
         4. Developing 5-8 comprehensive modules that build upon each other in a logical sequence
         5. Providing 4-6 clear learning objectives for each module with specific examples and practical applications
         6. Creating detailed, well-explained content for each module (at least 500 words per module) including:
@@ -320,7 +320,7 @@ elif not uploaded_files:
     st.info("📥 Please upload PDF files to begin.")
 
 # 🎯 GPT Model and Role selection
-model_options = ["gpt-4o-mini", "gpt-4o", "gpt-4"]
+model_options = ["gpt-4.1-nano", "gpt-4o-mini", "gpt-4"]
 selected_model = st.sidebar.selectbox("Select OpenAI Model", model_options, index=0)
 if selected_model:
     st.session_state.selected_model = selected_model
