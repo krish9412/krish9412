@@ -1,7 +1,9 @@
-streamlit>=1.45.0
-openai>=1.5.0
-pdfplumber>=0.10.0
-reportlab>=4.0.0
+streamlit>=1.28.0
+openai>=1.2.0
 langchain>=0.0.267
+langchain-openai>=0.0.2
+pdfplumber>=0.9.0
+reportlab>=3.6.12
+uuid>=1.30
 chromadb>=0.4.13
-langchain-community-0.3.23 langchain-core-0.3.56
+python-dotenv>=1.0.0
