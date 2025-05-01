@@ -14,7 +14,17 @@ from datetime import datetime
 # Import langchain components - updated imports for newer versions
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import ChromaDB
+
+# Fix the import error by using a try-except block to handle different import paths
+try:
+    from langchain_community.vectorstores import Chroma
+except ImportError:
+    try:
+        # Try the old import path as fallback
+        from langchain.vectorstores import Chroma
+    except ImportError:
+        st.error("Cannot import Chroma. Please install it with: pip install langchain-community")
+
 from langchain.chains import RetrievalQA
 from langchain_openai import OpenAI as LangchainOpenAI
 
@@ -197,7 +207,7 @@ def perform_course_generation():
            - Visual explanations where appropriate
            - Step-by-step guides for complex procedures
            - Comparative analysis when sources present different perspectives
-        7. Including a quiz with 3-6 thought-provoking questions per module for better understanding
+        7. Including a quiz with 3-5 thought-provoking questions per module for better understanding
 
         Return the response in the following JSON format:
         {{
@@ -321,7 +331,7 @@ elif not uploaded_files:
     st.info("📥 Please upload PDF files to begin.")
 
 # 🎯 GPT Model and Role selection
-model_options = ["gpt-4.1-nano"]
+model_options = ["gpt-4o-mini", "gpt-4o", "gpt-4"]
 selected_model = st.sidebar.selectbox("Select OpenAI Model", model_options, index=0)
 if selected_model:
     st.session_state.selected_model = selected_model
