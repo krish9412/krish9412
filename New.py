@@ -11,11 +11,12 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from datetime import datetime
 
+# Import langchain components - updated imports for newer versions
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import Chroma
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
-from langchain.llms import OpenAI as LangchainOpenAI
+from langchain_openai import OpenAI as LangchainOpenAI
 
 # Page Configuration
 st.set_page_config(page_title="📚 Professional Learning Platform", layout="wide")
@@ -108,7 +109,7 @@ def create_vectorstore():
             return False
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-        embeddings_model = OpenAIEmbeddings(openai_api_key=st.session_state.openai_api_key)
+        embeddings_model = OpenAIEmbeddings(api_key=st.session_state.openai_api_key)
 
         docs = []
         for doc in st.session_state.extracted_texts:
@@ -137,7 +138,7 @@ def generate_rag_answer(question):
             return "Please enter your OpenAI API key."
 
         llm = LangchainOpenAI(
-            openai_api_key=st.session_state.openai_api_key,
+            api_key=st.session_state.openai_api_key,
             model_name=st.session_state.get('selected_model', 'gpt-4o-mini')
         )
 
@@ -187,7 +188,7 @@ def perform_course_generation():
         Create an engaging, thorough and well-structured course by:
         1. Analyzing all provided documents and identifying common themes, complementary concepts, and unique insights from each source
         2. Creating an inspiring course title that reflects the integrated knowledge from all documents
-        3. Writing a detailed course description (at least 500 words) that explains how the course synthesizes information from multiple sources
+        3. Writing a detailed course description (at least 300 words) that explains how the course synthesizes information from multiple sources
         4. Developing 5-8 comprehensive modules that build upon each other in a logical sequence
         5. Providing 4-6 clear learning objectives for each module with specific examples and practical applications
         6. Creating detailed, well-explained content for each module (at least 500 words per module) including:
@@ -196,7 +197,7 @@ def perform_course_generation():
            - Visual explanations where appropriate
            - Step-by-step guides for complex procedures
            - Comparative analysis when sources present different perspectives
-        7. Including a quiz with 3-5 thought-provoking questions per module for better understanding
+        7. Including a quiz with 3-6 thought-provoking questions per module for better understanding
 
         Return the response in the following JSON format:
         {{
@@ -320,7 +321,7 @@ elif not uploaded_files:
     st.info("📥 Please upload PDF files to begin.")
 
 # 🎯 GPT Model and Role selection
-model_options = ["gpt-4.1-nano", "gpt-4o-mini", "gpt-4"]
+model_options = ["gpt-4.1-nano"]
 selected_model = st.sidebar.selectbox("Select OpenAI Model", model_options, index=0)
 if selected_model:
     st.session_state.selected_model = selected_model
