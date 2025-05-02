@@ -11,22 +11,11 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from datetime import datetime
 
-# Import langchain components - updated imports for newer versions
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
-
-# Fix the import error by using a try-except block to handle different import paths
-try:
-    from langchain_community.vectorstores import Chroma
-except ImportError:
-    try:
-        # Try the old import path as fallback
-        from langchain.vectorstores import Chroma
-    except ImportError:
-        st.error("Cannot import Chroma. Please install it with: pip install langchain-community")
-
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import Chroma
 from langchain.chains import RetrievalQA
-from langchain_openai import OpenAI as LangchainOpenAI
+from langchain.llms import OpenAI as LangchainOpenAI
 
 # Page Configuration
 st.set_page_config(page_title="📚 Professional Learning Platform", layout="wide")
@@ -119,7 +108,7 @@ def create_vectorstore():
             return False
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-        embeddings_model = OpenAIEmbeddings(api_key=st.session_state.openai_api_key)
+        embeddings_model = OpenAIEmbeddings(openai_api_key=st.session_state.openai_api_key)
 
         docs = []
         for doc in st.session_state.extracted_texts:
@@ -148,8 +137,8 @@ def generate_rag_answer(question):
             return "Please enter your OpenAI API key."
 
         llm = LangchainOpenAI(
-            api_key=st.session_state.openai_api_key,
-            model_name=st.session_state.get('selected_model', 'gpt-4o-mini')
+            openai_api_key=st.session_state.openai_api_key,
+            model_name=st.session_state.get('selected_model', 'gpt-4.1-nano')
         )
 
         qa_chain = RetrievalQA.from_chain_type(
