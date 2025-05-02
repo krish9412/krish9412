@@ -9,3 +9,4 @@ langchain-community>=0.0.16
 chromadb>=0.4.22
 requests>=2.31.0
 python-dotenv>=1.0.0
+protobuf==3.20.0
