@@ -44,7 +44,7 @@ if 'uploaded_file_names' not in st.session_state:
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
 if 'chroma_persist_directory' not in st.session_state:
-    st.session_state.chroma_persist_directory = f"chroma_db_{st.session_state.session_id}"
+    st.session_state.chroma_persist_directory = tempfile.gettempdir() + f"/chroma_db_{st.session_state.session_id}"
 
 # Sidebars Appearance
 st.sidebar.title("🎓 Professional Learning System")
@@ -58,7 +58,7 @@ if st.sidebar.button("🔄 Reset Application"):
     st.session_state.uploaded_files = []
     st.session_state.uploaded_file_names = []
     st.session_state.vector_store = None
-    st.session_state.chroma_persist_directory = f"chroma_db_{st.session_state.session_id}"
+    st.session_state.chroma_persist_directory = tempfile.gettempdir() + f"/chroma_db_{st.session_state.session_id}"
     st.rerun()
 
 # 🔐 OpenAI API Key Inputs
@@ -104,16 +104,26 @@ if uploaded_files and openai_api_key:
         if st.session_state.extracted_texts:
             st.sidebar.success(f"✅ {len(st.session_state.extracted_texts)} PDF files processed successfully!")
             
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-            split_docs = text_splitter.split_documents(documents)
-            
-            embeddings = OpenAIEmbeddings(api_key=openai_api_key)
-            st.session_state.vector_store = Chroma.from_documents(
-                documents=split_docs,
-                embedding=embeddings,
-                persist_directory=st.session_state.chroma_persist_directory
-            )
-            st.session_state.vector_store.persist()
+            try:
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                split_docs = text_splitter.split_documents(documents)
+                
+                embeddings = OpenAIEmbeddings(api_key=openai_api_key)
+                # Use in-memory store for Streamlit Cloud compatibility, fallback to persistent if local
+                st.session_state.vector_store = Chroma.from_documents(
+                    documents=split_docs,
+                    embedding=embeddings,
+                    persist_directory=None  # In-memory for Streamlit Cloud
+                )
+                if os.path.exists(st.session_state.chroma_persist_directory):
+                    st.session_state.vector_store.persist()
+            except Exception as e:
+                st.error(f"Error initializing vector store: {e}. Using in-memory store.")
+                embeddings = OpenAIEmbeddings(api_key=openai_api_key)
+                st.session_state.vector_store = Chroma.from_documents(
+                    documents=split_docs,
+                    embedding=embeddings
+                )
 else:
     st.info("📥 Please enter your OpenAI API key and upload PDF files to begin.")
 
