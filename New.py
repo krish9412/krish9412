@@ -108,15 +108,14 @@ if pdf_files and api_key:
                 doc_chunks = splitter.split_documents(doc_list)
                 
                 embedding_model = OpenAIEmbeddings(api_key=api_key)
+                
+                # Fix for NumPy float64 issue - use in-memory vectorstore
                 st.session_state.doc_vector_db = Chroma.from_documents(
                     documents=doc_chunks,
-                    embedding=embedding_model,
-                    persist_directory=None  # Use in-memory store for Streamlit Cloud
+                    embedding=embedding_model
                 )
-                if os.path.exists(st.session_state.temp_storage_path):
-                    st.session_state.doc_vector_db.persist()
             except Exception as e:
-                st.error(f"Failed to initialize vector database: {e}. Falling back to in-memory storage.")
+                st.error(f"Failed to initialize vector database: {e}. Using in-memory storage.")
                 embedding_model = OpenAIEmbeddings(api_key=api_key)
                 st.session_state.doc_vector_db = Chroma.from_documents(
                     documents=doc_chunks,
