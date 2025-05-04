@@ -1,8 +1,8 @@
 streamlit
 openai
 pdfplumber
-langchain
+langchain==0.1.0
 langchain-openai
 langchain-community
-chromadb
+chromadb==0.4.24
 reportlab
