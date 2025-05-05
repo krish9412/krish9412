@@ -1,6 +1,6 @@
 streamlit
 pdfplumber
-chroma
+chromadb
 numpy
 openai
 langchain
