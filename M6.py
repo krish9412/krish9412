@@ -42,8 +42,6 @@ if 'uploaded_doc_names' not in st.session_state:
     st.session_state.uploaded_doc_names = []
 if 'doc_vector_db' not in st.session_state:
     st.session_state.doc_vector_db = None
-if 'temp_storage_path' not in st.session_state:
-    st.session_state.temp_storage_path = tempfile.gettempdir() + f"/chroma_db_{st.session_state.unique_session}"
 
 # Sidebar setup
 st.sidebar.title("🎓 Professional Learning System")
@@ -57,11 +55,10 @@ if st.sidebar.button("🔄 Reset Application"):
     st.session_state.uploaded_docs = []
     st.session_state.uploaded_doc_names = []
     st.session_state.doc_vector_db = None
-    st.session_state.temp_storage_path = tempfile.gettempdir() + f"/chroma_db_{st.session_state.unique_session}"
     st.rerun()
 
-# Input for OpenAI API key
-api_key = st.sidebar.text_input("🔑 Enter your OpenAI API key", type="password")
+# Input for OpenAI API key, with support for secrets.toml
+api_key = st.secrets["openai"]["api_key"] if "openai" in st.secrets else st.sidebar.text_input("🔑 Enter your OpenAI API key", type="password")
 
 # File uploader for PDFs
 pdf_files = st.sidebar.file_uploader("📝 Upload Training PDFs", type=['pdf'], accept_multiple_files=True)
@@ -108,26 +105,21 @@ if pdf_files and api_key:
                 doc_chunks = splitter.split_documents(doc_list)
                 
                 embedding_model = OpenAIEmbeddings(api_key=api_key)
+                # Use in-memory Chroma store for Streamlit Cloud
                 st.session_state.doc_vector_db = Chroma.from_documents(
                     documents=doc_chunks,
                     embedding=embedding_model,
-                    persist_directory=None  # Use in-memory store for Streamlit Cloud
+                    persist_directory=None
                 )
-                if os.path.exists(st.session_state.temp_storage_path):
-                    st.session_state.doc_vector_db.persist()
             except Exception as e:
-                st.error(f"Failed to initialize vector database: {e}. Falling back to in-memory storage.")
-                embedding_model = OpenAIEmbeddings(api_key=api_key)
-                st.session_state.doc_vector_db = Chroma.from_documents(
-                    documents=doc_chunks,
-                    embedding=embedding_model
-                )
+                st.error(f"Failed to initialize vector database: {e}. Please try resetting the app.")
+                st.session_state.doc_vector_db = None
 else:
     st.info("📥 Please provide your OpenAI API key and upload PDFs to start.")
 
 # Model and role selection in sidebar
-model_choices = ["gpt-4.1-nano", "gpt-4o-mini", "gpt-4o", "gpt-4"]
-selected_model = st.sidebar.selectbox("Select OpenAI Model", model_choices, index=0 if "gpt-4.1-nano" in model_choices else 1)
+model_choices = ["gpt-4o-mini", "gpt-4o", "gpt-4"]  # Removed gpt-4.1-nano as it may not exist
+selected_model = st.sidebar.selectbox("Select OpenAI Model", model_choices, index=0)
 
 role_choices = ["Manager", "Executive", "Developer", "Designer", "Marketer", "Human Resources", "Other", "Fresher"]
 user_role = st.sidebar.selectbox("Select Your Role", role_choices)
@@ -142,7 +134,7 @@ if st.session_state.uploaded_doc_names:
     for idx, doc_name in enumerate(st.session_state.uploaded_doc_names):
         st.sidebar.text(f"{idx+1}. {doc_name}")
 
-# Function to generate answers using retrieved documents and course data
+# Function to generate answers using retrieved documents
 def answer_with_retrieval(query, course_info=None):
     try:
         if not api_key:
@@ -153,7 +145,6 @@ def answer_with_retrieval(query, course_info=None):
             
         # Retrieve relevant document chunks with similarity scores
         doc_retriever = st.session_state.doc_vector_db.as_retriever(search_kwargs={"k": 3})
-        # Perform a similarity search to get both documents and scores
         search_results = st.session_state.doc_vector_db.similarity_search_with_score(query, k=3)
         
         # Check relevance of retrieved documents
@@ -165,7 +156,7 @@ def answer_with_retrieval(query, course_info=None):
         scores = [result[1] for result in search_results]
         
         # Set a threshold for relevance (lower score means more relevant in Chroma)
-        relevance_threshold = 0.8  # Adjust based on testing; Chroma scores are distances
+        relevance_threshold = 0.8
         if min(scores) > relevance_threshold:
             return "The query does not appear to be relevant to the uploaded documents. Please ask a question related to the document content."
         
@@ -174,7 +165,7 @@ def answer_with_retrieval(query, course_info=None):
         for doc in relevant_docs:
             doc_context += f"\nSource: {doc.metadata.get('name', 'Unknown')}\nText: {doc.page_content[:500]}...\n"
         
-        # Build the course information context (not used for employer queries as per requirement)
+        # Build the course information context (not used for employer queries)
         course_details = "Course information is not used for employer queries as per the requirement."
         
         # Construct the prompt with explicit context
@@ -214,7 +205,6 @@ if st.sidebar.button("Submit Question"):
         if st.session_state.doc_vector_db:
             with st.spinner("Generating response..."):
                 try:
-                    # Pass None for course_info since employer queries should only use document content
                     response = answer_with_retrieval(new_question, course_info=None)
                 except Exception as e:
                     response = f"Failed to generate response: {str(e)}"
@@ -231,7 +221,6 @@ if st.sidebar.button("Submit Question"):
 
 # Function to validate quiz answers with normalization
 def validate_answer(q_id, user_response, correct_response):
-    # Normalize both user response and correct answer
     user_response_normalized = user_response.strip().lower() if isinstance(user_response, str) else str(user_response).strip().lower()
     correct_response_normalized = correct_response.strip().lower() if isinstance(correct_response, str) else str(correct_response).strip().lower()
     
@@ -524,7 +513,7 @@ with content_tab:
         Upload your PDF documents, and I'll craft a tailored course for you!
         
         ### Steps to Begin:
-        1. Enter your OpenAI API key in the sidebar.
+        1. Ensure your OpenAI API key is set up (in secrets.toml for Streamlit Cloud or via the sidebar).
         2. Select your role and focus areas.
         3. Upload PDF documents relevant to your learning goals.
         4. Click "Generate Course" to start your learning journey.
@@ -560,7 +549,6 @@ with queries_tab:
                     st.info("Generating answer...")
                     if st.session_state.doc_vector_db:
                         try:
-                            # Pass None for course_info since employer queries should only use document content
                             answer = answer_with_retrieval(query['question'], course_info=None)
                             st.session_state.queries_list[idx]['response'] = answer
                             st.session_state.queries_list[idx]['answered'] = True
