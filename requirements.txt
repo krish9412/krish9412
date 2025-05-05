@@ -1,8 +1,18 @@
-streamlit
-pdfplumber
-chromadb
-numpy
-openai
-langchain
-requests
-reportlab
+streamlit==1.45.0
+pdfplumber==0.11.6
+openai==1.77.0  # Updated to match logs
+reportlab==4.4.0  # Updated to match logs
+requests==2.32.3  # Updated to match logs
+langchain==0.3.25  # Updated to match logs
+langchain-openai==0.0.2  # Keep as is or update if needed
+chromadb==1.0.8  # Matches logs
+langchain-community==0.0.17  # Keep as is or update
+protobuf==3.20.3  # Downgrade to fix compatibility
+pydantic<3.0.0,>=2.5.0  # Matches logs
+markdown-it-py>=2.2.0
+rich>=13.5.0
+pygments>=2.15.0
+mdurl>=0.1.2
+tiktoken>=0.5.0
+typing-extensions>=4.5.0
+numpy>=1.23.5
