@@ -7,3 +7,4 @@ reportlab>=3.6.12
 uuid>=1.30
 chromadb>=0.4.13
 python-dotenv>=1.0.0
+protobuf==3.20.1
