@@ -8,12 +8,12 @@ from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-# Initialize Vector Search and LLM components
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.vectorstores import Chroma  # Changed from FAISS to Chroma
+# Updated LangChain imports for newer versions
+from langchain_text_splitters import CharacterTextSplitter
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
 from langchain.chains import ConversationalRetrievalChain
-from langchain.llms import OpenAI as LangchainLLM
+from langchain_openai import ChatOpenAI  # Updated LLM import
 from langchain.memory import ConversationBufferMemory
 
 # App configuration
@@ -256,8 +256,8 @@ def ask_knowledge_base(question):
         if not st.session_state.api_key:
             return "OpenAI API key is required."
             
-        # Create retrieval chain
-        llm = LangchainLLM(
+        # Create retrieval chain with updated LLM class
+        llm = ChatOpenAI(
             openai_api_key=st.session_state.api_key,
             model_name=st.session_state.model_choice
         )
