@@ -12,8 +12,8 @@ from reportlab.pdfgen import canvas
 from datetime import datetime
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.llms.openai import OpenAI as LangchainOpenAI
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.llms import OpenAI as LangchainOpenAI
 from langchain.vectorstores import Chroma
 from langchain.docstore.document import Document
 from langchain.prompts import PromptTemplate
@@ -629,8 +629,6 @@ with tab3:
                 if st.button(f"Generate Summary for {doc['filename']}", key=f"sum_{i}"):
                     with st.spinner("Generating document summary..."):
                         summary_query = f"Create a comprehensive summary of this document highlighting key concepts, theories, and practical applications:"
-                        # Create a temporary document list with just this document
-                        temp_doc = [doc]
                         # Use the RAG answer generation function
                         summary = generate_rag_answer(summary_query)
                         st.markdown("### AI-Generated Summary:")
