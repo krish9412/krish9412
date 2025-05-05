@@ -151,41 +151,40 @@ def answer_with_retrieval(query, course_info=None):
         if not st.session_state.doc_vector_db:
             return "Document vector database not initialized. Process some documents first."
             
-        # Retrieve relevant document chunks
+        # Retrieve relevant document chunks with similarity scores
         doc_retriever = st.session_state.doc_vector_db.as_retriever(search_kwargs={"k": 3})
-        relevant_docs = doc_retriever.get_relevant_documents(query)
+        # Perform a similarity search to get both documents and scores
+        search_results = st.session_state.doc_vector_db.similarity_search_with_score(query, k=3)
+        
+        # Check relevance of retrieved documents
+        if not search_results:
+            return "The query is not relevant to the uploaded documents. Please ask a question related to the document content."
+        
+        # Extract documents and their scores
+        relevant_docs = [result[0] for result in search_results]
+        scores = [result[1] for result in search_results]
+        
+        # Set a threshold for relevance (lower score means more relevant in Chroma)
+        relevance_threshold = 0.8  # Adjust based on testing; Chroma scores are distances
+        if min(scores) > relevance_threshold:
+            return "The query does not appear to be relevant to the uploaded documents. Please ask a question related to the document content."
         
         # Build the document context
         doc_context = ""
         for doc in relevant_docs:
             doc_context += f"\nSource: {doc.metadata.get('name', 'Unknown')}\nText: {doc.page_content[:500]}...\n"
         
-        # Build the course information context
-        course_details = ""
-        if course_info:
-            course_details = f"""
-            Course Name: {course_info.get('course_title', 'Not Available')}
-            Overview: {course_info.get('course_description', 'No description provided.')}
-            
-            Modules Overview:
-            """
-            for idx, module in enumerate(course_info.get('modules', []), 1):
-                course_details += f"""
-                Module {idx}: {module.get('title', 'Unnamed Module')}
-                Objectives: {', '.join(module.get('learning_objectives', ['None listed']))}
-                Summary: {module.get('content', 'No content available.')[:200]}...
-                """
-        else:
-            course_details = "No course information available."
+        # Build the course information context (not used for employer queries as per requirement)
+        course_details = "Course information is not used for employer queries as per the requirement."
         
         # Construct the prompt with explicit context
         full_prompt = (
             "You are an AI assistant for a professional learning platform. Provide a detailed and accurate answer to the following query "
-            "using the document excerpts and course information provided below. Be thorough and reference the documents where applicable.\n\n"
+            "using ONLY the document excerpts provided below. Do not use any external knowledge or course information. "
+            "Be thorough and reference the documents where applicable.\n\n"
             f"Query: {query}\n\n"
             f"Document Excerpts:\n{doc_context}\n\n"
-            f"Course Details:\n{course_details}\n\n"
-            "Answer the query comprehensively. If the information is insufficient, state so politely and suggest what might help."
+            "Answer the query comprehensively using only the provided document excerpts. If the information is insufficient, state so politely and suggest what might help."
         )
         
         # Initialize and call the LLM
@@ -208,15 +207,15 @@ def answer_with_retrieval(query, course_info=None):
 st.sidebar.markdown("---")
 st.sidebar.subheader("💬 Employer Queries")
 
-new_question = st.sidebar.text_area("Add a new question:", height=100)
+new_question = st.sidebar.text_area("Add a new question (related to uploaded documents):", height=100)
 if st.sidebar.button("Submit Question"):
     if new_question:
         response = ""
         if st.session_state.doc_vector_db:
             with st.spinner("Generating response..."):
                 try:
-                    current_course = st.session_state.course_data if st.session_state.course_ready else None
-                    response = answer_with_retrieval(new_question, current_course)
+                    # Pass None for course_info since employer queries should only use document content
+                    response = answer_with_retrieval(new_question, course_info=None)
                 except Exception as e:
                     response = f"Failed to generate response: {str(e)}"
         else:
@@ -230,9 +229,13 @@ if st.sidebar.button("Submit Question"):
         st.sidebar.success("Question submitted and answered!")
         st.rerun()
 
-# Function to validate quiz answers
+# Function to validate quiz answers with normalization
 def validate_answer(q_id, user_response, correct_response):
-    if user_response == correct_response:
+    # Normalize both user response and correct answer
+    user_response_normalized = user_response.strip().lower() if isinstance(user_response, str) else str(user_response).strip().lower()
+    correct_response_normalized = correct_response.strip().lower() if isinstance(correct_response, str) else str(correct_response).strip().lower()
+    
+    if user_response_normalized == correct_response_normalized:
         st.success("🎉 Correct answer! Great job!")
         st.session_state.answered_questions.add(q_id)
         return True
@@ -359,6 +362,11 @@ def generate_course_content():
            - Step-by-step guides for complex topics
            - Comparisons of differing perspectives from documents
         7. Adding a quiz per module with 3-5 questions to test understanding.
+        
+        For each quiz question:
+        - Provide exactly 4 options (A, B, C, D).
+        - Ensure the correct_answer is exactly one of the options (e.g., "A", "B", "C", or "D").
+        - Ensure the correct_answer matches the option exactly in terms of text (e.g., if option is "A", correct_answer must be "A", not "a" or "A ").
         
         Return the result in JSON format:
         {{
@@ -535,8 +543,9 @@ with content_tab:
 with queries_tab:
     st.title("💬 Employer Queries")
     st.markdown("""
-    Employers can ask questions here to get AI-generated insights based on the course and documents.
-    Submit your query in the sidebar, and the AI will respond with detailed answers.
+    Employers can ask questions here to get AI-generated insights based solely on the uploaded documents.
+    Submit your query in the sidebar, and the AI will respond with answers derived only from the document content.
+    Unrelated questions will not be answered.
     """)
     
     if not st.session_state.queries_list:
@@ -551,8 +560,8 @@ with queries_tab:
                     st.info("Generating answer...")
                     if st.session_state.doc_vector_db:
                         try:
-                            current_course = st.session_state.course_data if st.session_state.course_ready else None
-                            answer = answer_with_retrieval(query['question'], current_course)
+                            # Pass None for course_info since employer queries should only use document content
+                            answer = answer_with_retrieval(query['question'], course_info=None)
                             st.session_state.queries_list[idx]['response'] = answer
                             st.session_state.queries_list[idx]['answered'] = True
                             st.rerun()
@@ -581,6 +590,6 @@ with docs_tab:
                 if st.button(f"Generate Summary for {doc['name']}", key=f"summary_{idx}"):
                     with st.spinner("Generating summary..."):
                         summary_query = f"Summarize the document '{doc['name']}' focusing on key concepts and practical applications."
-                        summary = answer_with_retrieval(summary_query)
+                        summary = answer_with_retrieval(summary_query, course_info=None)
                         st.markdown("### AI-Generated Summary:")
                         st.write(summary)
