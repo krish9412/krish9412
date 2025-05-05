@@ -1,7 +1,0 @@
-streamlit
-pdfplumber
-openai
-langchain
-chromadb
-tiktoken
-python-dotenv
