@@ -5,5 +5,4 @@ numpy
 openai
 langchain
 requests
--U langchain-community
 reportlab
