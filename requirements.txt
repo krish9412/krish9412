@@ -3,6 +3,6 @@ pdfplumber
 openai 
 reportlab 
 requests
-langchain langchain-openai
+langchain
 chromadb
--U langchain-community
+langchain-community
