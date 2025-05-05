@@ -1,0 +1,8 @@
+streamlit
+pdfplumber
+chromadb
+numpy
+openai
+langchain
+reprotlab
+requests
