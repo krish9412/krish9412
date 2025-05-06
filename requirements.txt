@@ -2,7 +2,5 @@ streamlit
 pdfplumber
 openai
 reportlab 
-langchain 
-tiktoken 
-pydantic
+langchain  
 chromadb
