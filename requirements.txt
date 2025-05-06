@@ -1,5 +1,8 @@
-streamlit 
+streamlit
 pdfplumber 
 openai 
-reportlab
-langchain
+reportlab requests
+langchain 
+langchain-openai
+chromadb
+langchain-community
