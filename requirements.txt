@@ -1,6 +1,5 @@
 streamlit
 openai
 pdfplumber
-reportlab
 langchain
-faiss- cpu
+chromadb
