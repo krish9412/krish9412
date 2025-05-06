@@ -1,195 +1,394 @@
 import streamlit as st
-import uuid
+import os
+import tempfile
 import json
 import io
+import requests
 import pdfplumber
+import uuid
+import chromadb
+import numpy as np
 from openai import OpenAI
-from datetime import datetime
+from langchain.vectorstores import Chroma
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.document_loaders import PyPDFLoader
+from langchain.schema import Document
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+from datetime import datetime
 
-# Initialize Vector Search and LLM components
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.chains import ConversationalRetrievalChain
-from langchain.llms import OpenAI as LangchainLLM
-from langchain.memory import ConversationBufferMemory
+# Page Configuration
+st.set_page_config(page_title="📚 Professional Learning Platform", layout="wide")
 
-# App configuration
-st.set_page_config(
-    page_title="Professional Learning Hub",
-    page_icon="🧠",
-    layout="wide"
-)
+# Initializing sessions state variables
+if 'course_content' not in st.session_state:
+    st.session_state.course_content = None
+if 'course_generated' not in st.session_state:
+    st.session_state.course_generated = False
+if 'is_generating' not in st.session_state:
+    st.session_state.is_generating = False
+if 'completed_questions' not in st.session_state:
+    st.session_state.completed_questions = set()
+if 'total_questions' not in st.session_state:
+    st.session_state.total_questions = 0
+if 'extracted_texts' not in st.session_state:
+    st.session_state.extracted_texts = []
+if 'employer_queries' not in st.session_state:
+    st.session_state.employer_queries = []
+if 'session_id' not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+if 'uploaded_files' not in st.session_state:
+    st.session_state.uploaded_files = []
+if 'uploaded_file_names' not in st.session_state:
+    st.session_state.uploaded_file_names = []
+if 'vector_store' not in st.session_state:
+    st.session_state.vector_store = None
+if 'embeddings' not in st.session_state:
+    st.session_state.embeddings = None
 
-# Initialize session state
-def init_session_state():
-    if 'user_id' not in st.session_state:
-        st.session_state.user_id = str(uuid.uuid4())
-    
-    # User preferences
-    if 'api_key' not in st.session_state:
-        st.session_state.api_key = ""
-    if 'user_role' not in st.session_state:
-        st.session_state.user_role = ""
-    if 'interests' not in st.session_state:
-        st.session_state.interests = []
-    if 'model_choice' not in st.session_state:
-        st.session_state.model_choice = "gpt-4o-mini"
-    
-    # Course data
-    if 'learning_materials' not in st.session_state:
-        st.session_state.learning_materials = []
-    if 'file_names' not in st.session_state:
-        st.session_state.file_names = []
-    if 'course_data' not in st.session_state:
-        st.session_state.course_data = None
-    if 'generation_in_progress' not in st.session_state:
-        st.session_state.generation_in_progress = False
-    if 'is_course_ready' not in st.session_state:
-        st.session_state.is_course_ready = False
-    
-    # Quiz tracking
-    if 'answered_questions' not in st.session_state:
-        st.session_state.answered_questions = set()
-    if 'question_count' not in st.session_state:
-        st.session_state.question_count = 0
-    
-    # Q&A tracking
-    if 'user_questions' not in st.session_state:
-        st.session_state.user_questions = []
-    
-    # Vector search components
-    if 'knowledge_base' not in st.session_state:
-        st.session_state.knowledge_base = None
-    if 'memory' not in st.session_state:
-        st.session_state.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
-        )
+# Sidebars Appearance
+st.sidebar.title("🎓 Professional Learning System")
 
+# Clear Sessions Button & Session Management
+if st.sidebar.button("🔄 Reset Application"):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.session_state.session_id = str(uuid.uuid4())
+    st.session_state.extracted_texts = []
+    st.session_state.uploaded_files = []
+    st.session_state.uploaded_file_names = []
+    st.rerun()
 
-# PDF Processing functions
-def extract_text_from_pdf(pdf_document):
-    """Extract all text content from uploaded PDF"""
-    pdf_document.seek(0)
-    extracted_text = ""
-    
+# 🔐 OpenAI API Key Inputs
+openai_api_key = st.sidebar.text_input("🔑 Enter your OpenAI API key", type="password")
+
+# 📄 Multi-File Uploader for PDFs
+uploaded_files = st.sidebar.file_uploader("📝 Upload Training PDFs", type=['pdf'], accept_multiple_files=True)
+
+# Function to extract text from PDF using pdfplumber
+def extract_pdf_text(pdf_file):
     try:
-        with pdfplumber.open(pdf_document) as pdf:
+        pdf_file.seek(0)
+        with pdfplumber.open(pdf_file) as pdf:
+            text = ""
             for page in pdf.pages:
-                page_content = page.extract_text() or ""
-                extracted_text += page_content + "\n"
-                
-        return extracted_text
+                page_text = page.extract_text() or ""
+                text += page_text + "\n"
+        return text
     except Exception as e:
-        st.error(f"Error processing PDF: {str(e)}")
+        st.error(f"Error extracting PDF text: {e}")
         return ""
 
-
-def create_knowledge_base():
-    """Create a searchable knowledge base from processed documents"""
-    if not st.session_state.learning_materials:
-        st.warning("No learning materials have been processed yet.")
-        return False
-        
-    if not st.session_state.api_key:
-        st.warning("Please enter your OpenAI API key first.")
-        return False
-        
+# Function to create vector store from documents
+def create_vector_store(documents, openai_api_key):
     try:
-        # Create a text splitter for chunking
-        text_splitter = CharacterTextSplitter(
-            separator="\n",
-            chunk_size=1000,
-            chunk_overlap=100
+        # Initialize OpenAI embeddings
+        embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
+        st.session_state.embeddings = embeddings
+        
+        # Create LangChain documents from extracted text
+        langchain_docs = []
+        for doc in documents:
+            # Split text into chunks for better retrieval
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                length_function=len,
+            )
+            texts = text_splitter.split_text(doc["text"])
+            
+            # Create LangChain documents with metadata
+            for i, text_chunk in enumerate(texts):
+                langchain_docs.append(
+                    Document(
+                        page_content=text_chunk,
+                        metadata={"source": doc["filename"], "chunk": i}
+                    )
+                )
+        
+        # Create persistent ChromaDB vector store with a unique collection name
+        persist_directory = tempfile.mkdtemp()
+        vector_store = Chroma.from_documents(
+            documents=langchain_docs,
+            embedding=embeddings,
+            persist_directory=persist_directory,
+            collection_name=f"docs_{st.session_state.session_id}"
+        )
+        vector_store.persist()
+        
+        return vector_store
+    except Exception as e:
+        st.error(f"Error creating vector store: {str(e)}")
+        return None
+
+# Process uploaded files and add to session state
+if uploaded_files and openai_api_key:
+    # Clear previous uploads if list has changed
+    current_filenames = [file.name for file in uploaded_files]
+    if current_filenames != st.session_state.uploaded_file_names:
+        st.session_state.extracted_texts = []
+        st.session_state.uploaded_files = []
+        st.session_state.uploaded_file_names = current_filenames
+        
+        # Extract text from each PDF and store in session state
+        with st.spinner("Processing PDF files..."):
+            for pdf_file in uploaded_files:
+                extracted_text = extract_pdf_text(pdf_file)
+                if extracted_text:
+                    st.session_state.extracted_texts.append({
+                        "filename": pdf_file.name,
+                        "text": extracted_text
+                    })
+                    st.session_state.uploaded_files.append(pdf_file)
+            
+            # Create vector store from extracted texts
+            if st.session_state.extracted_texts:
+                with st.spinner("Creating vector embeddings for semantic search..."):
+                    st.session_state.vector_store = create_vector_store(
+                        st.session_state.extracted_texts, 
+                        openai_api_key
+                    )
+                    
+            if st.session_state.extracted_texts:
+                st.sidebar.success(f"✅ {len(st.session_state.extracted_texts)} PDF files processed successfully!")
+else:
+    st.info("📥 Please enter your OpenAI API key and upload PDF files to begin.")
+
+# 🎯 GPT Model and Role selection
+model_options = ["gpt-4o-mini", "gpt-4o", "gpt-4"]
+selected_model = st.sidebar.selectbox("Select OpenAI Model", model_options, index=0)
+
+role_options = ["Manager", "Executive", "Developer", "Designer", "Marketer", "Human Resources", "Other", "Fresher"]
+role = st.sidebar.selectbox("Select Your Role", role_options)
+
+learning_focus_options = ["Leadership", "Technical Skills", "Communication", "Project Management", "Innovation", "Team Building", "Finance"]
+learning_focus = st.sidebar.multiselect("Select Learning Focus", learning_focus_options)
+
+# Display uploaded files in sidebar
+if st.session_state.uploaded_file_names:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📄 Uploaded Files")
+    for i, filename in enumerate(st.session_state.uploaded_file_names):
+        st.sidebar.text(f"{i+1}. {filename}")
+
+# Enhanced RAG function using vector search with ChromaDB and LangChain
+def generate_rag_answer(question, documents, course_content=None):
+    try:
+        if not openai_api_key:
+            return "API key is required to generate answers."
+        
+        if not documents:
+            return "Document text is not available. Please process documents first."
+        
+        # Create context using vector search
+        context_docs = []
+        if st.session_state.vector_store:
+            # Use vector store to find relevant document chunks
+            results = st.session_state.vector_store.similarity_search_with_score(
+                question, 
+                k=5  # Retrieve top 5 most relevant chunks
+            )
+            
+            for doc, score in results:
+                context_docs.append({
+                    "content": doc.page_content,
+                    "source": doc.metadata.get("source", "Unknown"),
+                    "relevance": float(score)
+                })
+        
+        # If vector search failed or returned no results, fallback to basic approach
+        if not context_docs:
+            for i, doc in enumerate(documents[:3]):  # Limit to first 3 documents 
+                context_chunk = doc["text"][:2000]  # Limit each doc to avoid token issues
+                context_docs.append({
+                    "content": context_chunk,
+                    "source": doc["filename"],
+                    "relevance": 1.0  # Default relevance score
+                })
+        
+        # Format the context for the prompt
+        combined_context = ""
+        for i, ctx in enumerate(context_docs):
+            combined_context += f"\nDocument: {ctx['source']} (Relevance: {ctx['relevance']:.2f})\n{ctx['content']}\n"
+        
+        # Include course content for additional context if available
+        course_context = ""
+        if course_content:
+            course_context = f"""
+            Course Title: {course_content.get('course_title', '')}
+            Course Description: {course_content.get('course_description', '')}
+            
+            Module Information:
+            """
+            for i, module in enumerate(course_content.get('modules', [])):
+                course_context += f"""
+                Module {i+1}: {module.get('title', '')}
+                Learning Objectives: {', '.join(module.get('learning_objectives', []))}
+                Content Summary: {module.get('content', '')[:200]}...
+                """
+        
+        prompt = f"""
+        You are an AI assistant for a professional learning platform. Answer the following question 
+        based on the provided document content. Be specific, accurate, and helpful.
+        
+        Question: {question}
+        
+        Document Content: {combined_context}
+        
+        Course Information: {course_context}
+        
+        Provide a comprehensive answer using information from the documents and course contents.
+        If the question cannot be answered based on the provided information, say so politely.
+        Reference specific documents when appropriate in your answer.
+        Cite the specific document names when you're using information from them.
+        """
+        
+        # Create OpenAI client correctly
+        client = OpenAI(api_key=openai_api_key)
+        response = client.chat.completions.create(
+            model=selected_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5
         )
         
-        # Process all learning materials
-        all_chunks = []
-        for doc in st.session_state.learning_materials:
-            document_chunks = text_splitter.split_text(doc["content"])
-            all_chunks.extend(document_chunks)
-            
-        if not all_chunks:
-            st.warning("No content was extracted from the documents.")
-            return False
-            
-        # Create embeddings and vector store
-        embeddings = OpenAIEmbeddings(openai_api_key=st.session_state.api_key)
-        st.session_state.knowledge_base = FAISS.from_texts(
-            all_chunks, 
-            embeddings
-        )
-        
-        st.success("✅ Knowledge base successfully created!")
-        return True
+        # Return generated answers
+        return response.choices[0].message.content
         
     except Exception as e:
-        st.error(f"Error creating knowledge base: {str(e)}")
+        return f"Error generating answer: {str(e)}"
+
+# Employee Queries Section in Sidebar
+st.sidebar.markdown("---")
+st.sidebar.subheader("💬 Employer Queries")
+
+new_query = st.sidebar.text_area("Add a new question:", height=100)
+if st.sidebar.button("Submit Question"):
+    if new_query:
+        # Generate proper answers automatically if documents are available
+        answer = ""
+        if st.session_state.extracted_texts:
+            with st.spinner("Generating answer..."):
+                answer = generate_rag_answer(
+                    new_query, 
+                    st.session_state.extracted_texts,
+                    st.session_state.course_content if st.session_state.course_generated else None
+                )
+        else:
+            answer = "Please upload and process documents first to enable question answering."
+        
+        st.session_state.employer_queries.append({
+            "question": new_query,
+            "answer": answer,
+            "answered": bool(answer)
+        })
+        st.sidebar.success("Question submitted and answered!")
+        st.rerun()
+
+# Functions to check answer and update progress
+def check_answer(question_id, user_answer, correct_answer):
+    if user_answer == correct_answer:
+        st.success("🎉 Correct! Well done!")
+        # Add to completed questions set if not already there
+        st.session_state.completed_questions.add(question_id)
+        return True
+    else:
+        st.error(f"Not quite. The correct answer is: {correct_answer}")
         return False
 
+# Generate Progress Report
+def generate_progress_report():
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    c.drawString(100, 750, "Training Progress Report")
+    c.drawString(100, 730, f"User Role: {role}")
+    c.drawString(100, 710, f"Date: {datetime.now().strftime('%Y-%m-%d')}")
+    
+    completed = len(st.session_state.completed_questions)
+    total = st.session_state.total_questions
+    c.drawString(100, 690, f"Progress: {completed}/{total} questions completed ({completed/total*100:.1f}%)")
+    
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
 
-# Course generation functions
-def generate_learning_path():
-    """Generate personalized learning course using OpenAI"""
-    if not st.session_state.knowledge_base:
-        st.error("Knowledge base not initialized. Please upload and process documents first.")
-        return
-        
-    if not st.session_state.api_key:
-        st.error("OpenAI API key is required for course generation.")
-        return
-        
+# Course Generation function
+def generate_course():
+    # Set generation flag to True when starting
+    st.session_state.is_generating = True
+    st.session_state.course_generated = False
+    st.rerun()  # Trigger rerun to show loading state
+
+# Function to actually generate the course content
+def perform_course_generation():
     try:
-        # Prepare document context
-        document_context = ""
-        for i, doc in enumerate(st.session_state.learning_materials):
-            document_context += f"\n--- Document {i+1}: {doc['filename']} ---\n"
-            document_context += doc['content'][:2500]  # Limit context size
+        # Get relevant documents using vector search for better context
+        combined_docs = ""
+        if st.session_state.vector_store and st.session_state.embeddings:
+            # First create a general query to find most important document sections
+            general_query = f"Create a comprehensive professional learning course for a {role} focusing on {', '.join(learning_focus)}"
+            
+            # Get most relevant document chunks
+            results = st.session_state.vector_store.similarity_search_with_score(
+                general_query, 
+                k=10  # Get top 10 most relevant chunks
+            )
+            
+            # Format documents with relevance scores
+            for i, (doc, score) in enumerate(results):
+                doc_summary = f"\n--- DOCUMENT CHUNK {i+1} FROM: {doc.metadata.get('source', 'Unknown')} (RELEVANCE: {float(score):.2f}) ---\n"
+                doc_summary += doc.page_content
+                combined_docs += doc_summary + "\n\n"
+        else:
+            # Fallback to basic approach if vector store isn't available
+            for i, doc in enumerate(st.session_state.extracted_texts):
+                doc_summary = f"\n--- DOCUMENT {i+1}: {doc['filename']} ---\n"
+                doc_summary += doc['text'][:3000]  # Limit each doc to avoid token limits
+                combined_docs += doc_summary + "\n\n"
         
-        # Get user preferences
-        user_profile = f"Role: {st.session_state.user_role}, Interests: {', '.join(st.session_state.interests)}"
+        professional_context = f"Role: {role}, Focus: {', '.join(learning_focus)}"
         
-        # Generate document summary using retrieval
-        summary_query = "Generate a comprehensive summary of these documents, identifying key themes, concepts, and actionable insights."
-        summary = ask_knowledge_base(summary_query)
+        # Get a document summary first using the improved RAG function
+        summary_query = "Create a comprehensive summary of these documents highlighting key concepts, theories, and practical applications across all materials."
+        document_summary = generate_rag_answer(summary_query, st.session_state.extracted_texts)
         
-        # Prompt for course creation
-        course_prompt = f"""
-        Create a comprehensive professional learning course based on the uploaded documents.
+        prompt = f"""
+        Design a comprehensive professional learning course based on the multiple documents provided.
+        Context: {professional_context}
+        Document Summary: {document_summary}
         
-        User profile: {user_profile}
+        Document Contents: {combined_docs[:5000]}
         
-        Document summary: {summary}
+        Create an engaging, thorough and well-structured course by:
+        1. Analyzing all provided documents and identifying common themes, complementary concepts, and unique insights from each source
+        2. Creating an inspiring course title that reflects the integrated knowledge from all documents
+        3. Writing a detailed course description (at least 300 words) that explains how the course synthesizes information from multiple sources
+        4. Developing 5-8 comprehensive modules that build upon each other in a logical sequence
+        5. Providing 4-6 clear learning objectives for each module with specific examples and practical applications
+        6. Creating detailed, well-explained content for each module (at least 500 words per module) including:
+           - Real-world examples and case studies
+           - Practical applications of concepts
+           - Visual explanations where appropriate
+           - Step-by-step guides for complex procedures
+           - Comparative analysis when sources present different perspectives
+        7. Including a quiz with 3-5 thought-provoking questions per module for better understanding
         
-        Document samples: {document_context[:4000]}
-        
-        Design a well-structured course that:
-        1. Has a compelling title that captures the essence of the learning materials
-        2. Includes a detailed course description (300+ words) explaining the value and application of this knowledge
-        3. Contains 5-7 logical modules that build on each other
-        4. For each module, provide:
-           - A clear title and 4-5 specific learning objectives
-           - Comprehensive content (500+ words) with practical applications, examples, and guidelines
-           - A quiz with 3-5 challenging multiple-choice questions
-        
-        Return your response in this JSON format:
+        Return the response in the following JSON format:
         {{
-            "title": "Course Title",
-            "description": "Detailed course description",
+            "course_title": "Your Course Title",
+            "course_description": "Detailed description of the course",
             "modules": [
                 {{
-                    "title": "Module Title",
-                    "objectives": ["Objective 1", "Objective 2", "..."],
-                    "content": "Module content with detailed explanations and examples",
-                    "assessment": {{
+                    "title": "Module 1 Title",
+                    "learning_objectives": ["Objective 1", "Objective 2", "Objective 3"],
+                    "content": "Module content text with detailed explanations, examples, and practical applications",
+                    "quiz": {{
                         "questions": [
                             {{
-                                "text": "Question text?",
-                                "choices": ["Option A", "Option B", "Option C", "Option D"],
-                                "answer": "Correct option"
+                                "question": "Question text?",
+                                "options": ["Option A", "Option B", "Option C", "Option D"],
+                                "correct_answer": "Option A"
                             }}
                         ]
                     }}
@@ -197,398 +396,292 @@ def generate_learning_path():
             ]
         }}
         
-        Make the content extremely practical and actionable for {st.session_state.user_role} professionals.
-        Include comparative perspectives where the documents present different approaches.
+        Make the content exceptionally practical, actionable, and tailored to the professional context.
+        Provide detailed explanations, real-world examples, and practical applications in each module content.
+        Where document sources provide different perspectives or approaches to the same topic, compare and contrast them.
         """
         
-        # Call OpenAI API
-        client = OpenAI(api_key=st.session_state.api_key)
-        response = client.chat.completions.create(
-            model=st.session_state.model_choice,
-            messages=[{"role": "user", "content": course_prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.7
-        )
-        
-        course_data = json.loads(response.choices[0].message.content)
-        st.session_state.course_data = course_data
-        st.session_state.is_course_ready = True
-        
-        # Count total questions for progress tracking
-        question_count = 0
-        for module in course_data.get("modules", []):
-            questions = module.get("assessment", {}).get("questions", [])
-            question_count += len(questions)
-        st.session_state.question_count = question_count
-        
-    except Exception as e:
-        st.error(f"Error generating course: {str(e)}")
-        
-    st.session_state.generation_in_progress = False
-
-
-def ask_knowledge_base(question):
-    """Generate answer to question using RAG"""
-    try:
-        if not st.session_state.knowledge_base:
-            return "Please upload and process documents first."
-            
-        if not st.session_state.api_key:
-            return "OpenAI API key is required."
-            
-        # Create retrieval chain
-        llm = LangchainLLM(
-            openai_api_key=st.session_state.api_key,
-            model_name=st.session_state.model_choice
-        )
-        
-        qa_chain = ConversationalRetrievalChain.from_llm(
-            llm=llm,
-            retriever=st.session_state.knowledge_base.as_retriever(search_kwargs={"k": 4}),
-            memory=st.session_state.memory
-        )
-        
-        result = qa_chain({"question": question})
-        return result["answer"]
-        
-    except Exception as e:
-        return f"Error retrieving answer: {str(e)}"
-
-
-def check_quiz_answer(question_id, user_choice, correct_answer):
-    """Verify user's quiz answer and update progress"""
-    if user_choice == correct_answer:
-        st.success("✅ Correct answer! Well done!")
-        st.session_state.answered_questions.add(question_id)
-        return True
-    else:
-        st.error(f"Not quite right. The correct answer is: {correct_answer}")
-        return False
-
-
-def create_progress_report():
-    """Generate downloadable PDF progress report"""
-    buffer = io.BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=letter)
-    
-    # Add report header
-    pdf.setFont("Helvetica-Bold", 18)
-    pdf.drawString(72, 750, "Learning Progress Report")
-    
-    pdf.setFont("Helvetica", 12)
-    pdf.drawString(72, 725, f"Date: {datetime.now().strftime('%B %d, %Y')}")
-    pdf.drawString(72, 710, f"Role: {st.session_state.user_role}")
-    pdf.drawString(72, 695, f"Interests: {', '.join(st.session_state.interests)}")
-    
-    # Add course info
-    if st.session_state.course_data:
-        pdf.setFont("Helvetica-Bold", 14)
-        pdf.drawString(72, 665, f"Course: {st.session_state.course_data.get('title', 'Unnamed Course')}")
-        
-        # Add progress statistics
-        completed = len(st.session_state.answered_questions)
-        total = st.session_state.question_count
-        completion_rate = (completed / total * 100) if total > 0 else 0
-        
-        pdf.setFont("Helvetica", 12)
-        pdf.drawString(72, 640, f"Overall Progress: {completed} of {total} questions completed ({completion_rate:.1f}%)")
-        
-        # Add module breakdown
-        y_position = 610
-        pdf.setFont("Helvetica-Bold", 12)
-        pdf.drawString(72, y_position, "Module Progress:")
-        y_position -= 20
-        
-        # List each module
-        for i, module in enumerate(st.session_state.course_data.get("modules", [])):
-            module_title = module.get("title", f"Module {i+1}")
-            pdf.setFont("Helvetica", 11)
-            pdf.drawString(90, y_position, f"• {module_title}")
-            y_position -= 15
-    
-    pdf.save()
-    buffer.seek(0)
-    return buffer
-
-
-# UI layout and components
-def sidebar_ui():
-    """Create sidebar UI elements"""
-    st.sidebar.title("🧠 Learning Hub")
-    st.sidebar.markdown("---")
-    
-    # Reset application
-    if st.sidebar.button("🔄 Reset Application"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        init_session_state()
-        st.rerun()
-    
-    # API Key input
-    api_key = st.sidebar.text_input("🔑 OpenAI API Key", type="password")
-    if api_key:
-        st.session_state.api_key = api_key
-    
-    # User profile settings
-    st.sidebar.subheader("Profile Settings")
-    
-    roles = ["Executive", "Manager", "Developer", "Designer", "Marketer", 
-             "HR Professional", "New Graduate", "Consultant"]
-    user_role = st.sidebar.selectbox("Professional Role", roles)
-    if user_role:
-        st.session_state.user_role = user_role
-    
-    interest_options = ["Leadership", "Technical Skills", "Communication", 
-                        "Project Management", "Innovation", "Team Building", 
-                        "Data Analysis", "Strategic Planning"]
-    interests = st.sidebar.multiselect("Learning Interests", interest_options)
-    if interests:
-        st.session_state.interests = interests
-    
-    # AI model selection
-    models = ["gpt-4o-mini", "gpt-4o", "gpt-4"]
-    model_choice = st.sidebar.selectbox("AI Model", models)
-    if model_choice:
-        st.session_state.model_choice = model_choice
-    
-    # Document upload section
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📄 Upload Learning Materials")
-    
-    uploaded_files = st.sidebar.file_uploader(
-        "Upload PDF Documents",
-        type=['pdf'],
-        accept_multiple_files=True
-    )
-    
-    # Process uploaded files
-    if uploaded_files and st.session_state.api_key:
-        current_files = [file.name for file in uploaded_files]
-        
-        # Check if files have changed
-        if current_files != st.session_state.file_names:
-            st.session_state.learning_materials = []
-            st.session_state.file_names = current_files
-            
-            with st.sidebar.status("Processing documents..."):
-                for pdf_file in uploaded_files:
-                    text_content = extract_text_from_pdf(pdf_file)
-                    if text_content:
-                        st.session_state.learning_materials.append({
-                            "filename": pdf_file.name,
-                            "content": text_content
-                        })
-            
-            if st.session_state.learning_materials:
-                st.sidebar.success(f"✅ Processed {len(st.session_state.learning_materials)} documents")
-                create_knowledge_base()
-    
-    # Display uploaded files
-    if st.session_state.file_names:
-        st.sidebar.markdown("---")
-        st.sidebar.caption("📚 Uploaded Documents:")
-        for i, filename in enumerate(st.session_state.file_names):
-            st.sidebar.text(f"{i+1}. {filename}")
-    
-    # Course generation button
-    if st.session_state.knowledge_base and st.session_state.api_key:
-        st.sidebar.markdown("---")
-        if st.sidebar.button("🚀 Generate Learning Path"):
-            st.session_state.generation_in_progress = True
-            st.session_state.is_course_ready = False
-            st.rerun()
-    
-    # Ask question section
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("❓ Ask About Materials")
-    
-    question = st.sidebar.text_area("Your question:")
-    if st.sidebar.button("Ask Question"):
-        if question:
-            if st.session_state.knowledge_base and st.session_state.api_key:
-                with st.sidebar.status("Generating answer..."):
-                    answer = ask_knowledge_base(question)
-                
-                st.session_state.user_questions.append({
-                    "question": question,
-                    "answer": answer
-                })
-                st.sidebar.success("Question answered!")
-                st.rerun()
-            else:
-                st.sidebar.error("Please upload documents and enter API key first")
-
-
-def main_content():
-    """Create main UI content area"""
-    # Check if we're generating a course
-    if st.session_state.generation_in_progress:
-        with st.status("Generating personalized learning path...", expanded=True):
-            st.write("Analyzing documents and creating course structure...")
-            generate_learning_path()
-            st.success("✅ Learning path created successfully!")
-        st.rerun()
-    
-    # Create tabs for different sections
-    tab1, tab2, tab3 = st.tabs([
-        "📚 Learning Path", 
-        "❓ Q&A History", 
-        "📑 Document Library"
-    ])
-    
-    with tab1:
-        # Learning path content
-        if not st.session_state.is_course_ready:
-            st.header("Welcome to Your Learning Hub")
-            st.write("Upload your learning materials to get started. We'll analyze them and create a personalized learning path for you.")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.info("📤 **Step 1:** Upload PDF documents via the sidebar")
-            with col2:
-                st.info("🚀 **Step 2:** Click 'Generate Learning Path' to create your personalized course")
-                
-            # Show example content
-            if st.button("See Example Learning Path"):
-                st.markdown("""
-                ### Example: Digital Leadership Transformation
-                
-                This learning path combines multiple resources to help you develop essential leadership skills in digital environments:
-                
-                **Module Examples:**
-                - Digital Leadership Foundations
-                - Change Management in Digital Transformation
-                - Building High-Performing Remote Teams
-                - Data-Driven Decision Making
-                - Innovation Culture & Design Thinking
-                
-                *Upload your documents to generate your own personalized learning path!*
-                """)
-        
-        elif st.session_state.course_data:
-            course = st.session_state.course_data
-            
-            # Course header
-            st.title(f"📚 {course.get('title', 'Your Learning Path')}")
-            st.caption(f"Personalized for {st.session_state.user_role} focused on {', '.join(st.session_state.interests)}")
-            
-            # Course description
-            st.markdown(course.get('description', 'A personalized learning journey.'))
-            
-            # Progress tracker
-            completed = len(st.session_state.answered_questions)
-            total = st.session_state.question_count
-            progress_pct = (completed / total * 100) if total > 0 else 0
-            
-            st.progress(progress_pct / 100)
-            st.write(f"**Progress:** {completed}/{total} assessments completed ({progress_pct:.1f}%)")
-            
-            # Download progress report
-            st.download_button(
-                "📊 Download Progress Report",
-                create_progress_report(),
-                "learning_progress.pdf",
-                "application/pdf"
+        try:
+            # Create OpenAI client correctly
+            client = OpenAI(api_key=openai_api_key)
+            response = client.chat.completions.create(
+                model=selected_model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.7
             )
             
-            st.markdown("---")
+            # Accessing the response content
+            response_content = response.choices[0].message.content
             
-            # Module navigation
-            st.subheader("📋 Course Overview")
-            modules = course.get("modules", [])
-            for i, module in enumerate(modules, 1):
-                st.write(f"**Module {i}:** {module.get('title', f'Module {i}')}")
+            try:
+                st.session_state.course_content = json.loads(response_content)
+                st.session_state.course_generated = True
+                
+                # Count total questions for progress tracking
+                total_questions = 0
+                for module in st.session_state.course_content.get("modules", []):
+                    quiz = module.get("quiz", {})
+                    total_questions += len(quiz.get("questions", []))
+                st.session_state.total_questions = total_questions
+                
+            except json.JSONDecodeError as e:
+                st.error(f"Error parsing JSON response: {e}")
+                st.text(response_content)
+        
+        except Exception as e:
+            st.error(f"OpenAI API Error: {e}")
+            st.error("Please check your API key and model selection.")
             
-            st.markdown("---")
-            
-            # Module details with expandable sections
-            for i, module in enumerate(modules, 1):
-                module_title = module.get('title', f'Module {i}')
-                with st.expander(f"Module {i}: {module_title}"):
-                    # Learning objectives
-                    st.markdown("### 🎯 Learning Objectives")
-                    objectives = module.get('objectives', [])
+    except Exception as e:
+        st.error(f"Error: {e}")
+    
+    # Always reset the generation flag when done
+    st.session_state.is_generating = False
+
+# Main contents area with tabs
+tab1, tab2, tab3, tab4 = st.tabs(["📚 Course Content", "❓ Employer Queries", "📑 Document Sources", "🔍 Search Documents"])
+
+# Check if we're in the middle of generating a course and need to continue
+if st.session_state.is_generating:
+    with st.spinner("Generating your personalized course from multiple documents..."):
+        # Reset completed questions when generating a new course
+        st.session_state.completed_questions = set()
+        perform_course_generation()
+        st.success("✅ Your Comprehensive Course is Ready!")
+        st.rerun()  # Refresh the UI after completion
+
+with tab1:
+    # Display Course Content
+    if st.session_state.course_generated and st.session_state.course_content:
+        course = st.session_state.course_content
+        
+        # Course Header with appreciation
+        st.title(f"🌟 {course.get('course_title', 'Professional Course')}")
+        st.markdown(f"*Specially designed for {role}s focusing on {', '.join(learning_focus)}*")
+        st.write(course.get('course_description', 'A structured course to enhance your skills.'))
+        
+        # Tracking the Progress
+        completed = len(st.session_state.completed_questions)
+        total = st.session_state.total_questions
+        progress_percentage = (completed / total * 100) if total > 0 else 0
+        
+        st.progress(progress_percentage / 100)
+        st.write(f"**Progress:** {completed}/{total} questions completed ({progress_percentage:.1f}%)")
+        # Add Download Report button
+        st.download_button("📥 Download Progress Report", generate_progress_report(), "progress_report.pdf")
+        
+        st.markdown("---")
+        st.subheader("📋 Course Overview")
+        
+        # Safely access module titles
+        modules = course.get("modules", [])
+        if modules:
+            modules_list = [module.get('title', f'Module {i+1}') for i, module in enumerate(modules)]
+            for i, module_title in enumerate(modules_list, 1):
+                st.write(f"**Module {i}:** {module_title}")
+        else:
+            st.warning("No modules were found in the course content.")
+        
+        st.markdown("---")
+        
+        # Detailed Module Contents with improved formatting
+        for i, module in enumerate(modules, 1):
+            module_title = module.get('title', f'Module {i}')
+            with st.expander(f"📚 Module {i}: {module_title}"):
+                # Module Learning Objectives
+                st.markdown("### 🎯 Learning Objectives:")
+                objectives = module.get('learning_objectives', [])
+                if objectives:
                     for obj in objectives:
                         st.markdown(f"- {obj}")
-                    
-                    # Module content
-                    st.markdown("### 📖 Content")
-                    content = module.get('content', 'No content available.')
-                    
-                    # Format content nicely
-                    for paragraph in content.split('\n\n'):
-                        if paragraph.strip().startswith('#'):
-                            st.markdown(paragraph)
-                        else:
-                            st.write(paragraph)
-                    
-                    # Quiz section
-                    st.markdown("### 📝 Assessment")
-                    questions = module.get('assessment', {}).get('questions', [])
-                    
-                    for q_idx, question in enumerate(questions, 1):
-                        question_id = f"m{i}_q{q_idx}"
-                        question_text = question.get('text', f'Question {q_idx}')
-                        choices = question.get('choices', [])
-                        answer = question.get('answer', '')
+                else:
+                    st.write("No learning objectives specified.")
+                
+                # Module Content with better readability
+                st.markdown("### 📖 Module Content:")
+                module_content = module.get('content', 'No content available for this module.')
+                
+                # Split the content into paragraphs and add proper formatting
+                paragraphs = module_content.split('\n\n')
+                for para in paragraphs:
+                    if para.strip().startswith('#'):
+                        # Handle markdown headers
+                        st.markdown(para)
+                    elif para.strip().startswith('*') and para.strip().endswith('*'):
+                        # Handle emphasized text
+                        st.markdown(para)
+                    elif para.strip().startswith('1.') or para.strip().startswith('- '):
+                        # Handle lists
+                        st.markdown(para)
+                    else:
+                        # Regular paragraphs
+                        st.write(para)
+                        st.write("")  # Add spacing between paragraphs
+                
+                # Key Takeaways section
+                st.markdown("### 💡 Key Takeaways:")
+                st.info("The content in this module will help you develop practical skills that you can apply immediately in your professional context.")
+                
+                # Module Quiz with improved UI
+                st.markdown("### 📝 Module Quiz:")
+                quiz = module.get('quiz', {})
+                questions = quiz.get('questions', [])
+                
+                if questions:
+                    for q_idx, q in enumerate(questions, 1):
+                        question_id = f"module_{i}_question_{q_idx}"
+                        question_text = q.get('question', f'Question {q_idx}')
                         
-                        # Show question or completion status
-                        if question_id not in st.session_state.answered_questions:
-                            st.write(f"**Question {q_idx}:** {question_text}")
+                        # Create quiz question container
+                        quiz_container = st.container()
+                        with quiz_container:
+                            st.markdown(f"**Question {q_idx}:** {question_text}")
                             
-                            if choices:
-                                user_choice = st.radio(
-                                    f"Select your answer for question {q_idx}:",
-                                    choices,
-                                    key=f"quiz_{question_id}"
-                                )
+                            options = q.get('options', [])
+                            if options:
+                                # Create a unique key for each radio button
+                                option_key = f"quiz_{i}_{q_idx}"
+                                user_answer = st.radio("Select your answer:", options, key=option_key)
                                 
-                                if st.button(f"Submit Answer", key=f"submit_{question_id}"):
-                                    check_quiz_answer(question_id, user_choice, answer)
+                                # Create a unique key for each submit button
+                                submit_key = f"submit_{i}_{q_idx}"
+                                
+                                # Show completion status for this question
+                                if question_id in st.session_state.completed_questions:
+                                    st.success("✓ Question completed")
+                                else:
+                                    if st.button(f"Check Answer", key=submit_key):
+                                        correct_answer = q.get('correct_answer', '')
+                                        check_answer(question_id, user_answer, correct_answer)
                             else:
-                                st.warning("No choices available for this question.")
-                        else:
-                            st.success(f"✅ Completed Question {q_idx}: {question_text}")
-    
-    with tab2:
-        # Q&A History
-        st.header("❓ Question & Answer History")
+                                st.write("No options available for this question.")
+                        
+                        st.markdown("---")
+                else:
+                    st.write("No quiz questions available for this module.")
+
+    else:
+        # Welcome screen when no course is generated yet
+        st.title("Welcome to Professional Learning Platform")
+        st.markdown("""
+        ## Transform your professional development with AI-powered learning system
         
-        if not st.session_state.user_questions:
-            st.info("Ask questions about the learning materials using the sidebar.")
-        else:
-            for i, qa in enumerate(st.session_state.user_questions, 1):
-                with st.expander(f"Q{i}: {qa['question'][:80]}..."):
-                    st.markdown("**Question:**")
-                    st.write(qa['question'])
-                    st.markdown("**Answer:**")
-                    st.write(qa['answer'])
-    
-    with tab3:
-        # Document Library
-        st.header("📑 Document Library")
+        Upload multiple PDF documents, and I'll create a comprehensive, integrated learning course just for you!
         
-        if not st.session_state.learning_materials:
-            st.info("No documents have been uploaded yet. Use the sidebar to upload PDF files.")
-        else:
-            for i, doc in enumerate(st.session_state.learning_materials, 1):
-                with st.expander(f"Document {i}: {doc['filename']}"):
-                    st.write(f"**Filename:** {doc['filename']}")
-                    preview_len = min(800, len(doc['content']))
-                    st.text_area(
-                        "Preview:",
-                        doc['content'][:preview_len] + ('...' if len(doc['content']) > preview_len else ''),
-                        height=200,
-                        disabled=True
+        ### How it works:
+        1. Enter your OpenAI API key in the sidebar
+        2. Select your professional role and learning focus
+        3. Upload multiple PDF documents related to your area of interest
+        4. Click "Generate Course" to create your personalized learning journey that combines insights from all documents
+        
+        Get ready to enhance your skills and accelerate your professional growth!
+        """)
+        
+        # Generate Course Button - only if not currently generating
+        if st.session_state.extracted_texts and openai_api_key and not st.session_state.is_generating:
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button("🚀 Generate My Course", use_container_width=True):
+                    generate_course()
+        elif st.session_state.is_generating:
+            st.info("Generating your personalized course... Please wait.")
+
+with tab2:
+    st.title("💬 Employer Queries")
+    st.markdown("""
+    This section allows employers to ask questions and get AI-generated answers about the course content or related topics.
+    Submit your questions in the sidebar, and our AI will automatically generate answers based on the uploaded documents.
+    """)
+    
+    if not st.session_state.employer_queries:
+        st.info("No questions have been submitted yet. Add a question in the sidebar to get started.")
+    else:
+        for i, query in enumerate(st.session_state.employer_queries):
+            with st.expander(f"Question {i+1}: {query['question'][:50]}..." if len(query['question']) > 50 else f"Question {i+1}: {query['question']}"):
+                st.write(f"**Question:** {query['question']}")
+                
+                if query['answered']:
+                    st.write(f"**Answer:** {query['answer']}")
+                else:
+                    st.info("Generating answer...")
+                    # Generate answer on-demand if not already answered
+                    if st.session_state.extracted_texts:
+                        try:
+                            answer = generate_rag_answer(
+                                query['question'], 
+                                st.session_state.extracted_texts,
+                                st.session_state.course_content if st.session_state.course_generated else None
+                            )
+                            st.session_state.employer_queries[i]['answer'] = answer
+                            st.session_state.employer_queries[i]['answered'] = True
+                            st.rerun()
+                        except Exception as e:
+                            error_msg = f"Error generating answer: {str(e)}. Please try resetting the application."
+                            st.error(error_msg)
+                            st.session_state.employer_queries[i]['answer'] = error_msg
+                            st.session_state.employer_queries[i]['answered'] = True
+                    else:
+                        st.warning("No documents uploaded yet. Please upload documents to generate answers.")
+
+with tab3:
+    st.title("📑 Document Sources")
+    
+    if not st.session_state.extracted_texts:
+        st.info("No documents have been uploaded yet. Please upload PDF files in the sidebar to see their content here.")
+    else:
+        st.write(f"**{len(st.session_state.extracted_texts)} documents uploaded:**")
+        
+        for i, doc in enumerate(st.session_state.extracted_texts):
+            with st.expander(f"Document {i+1}: {doc['filename']}"):
+                # Display document preview (first 1000 characters)
+                preview_text = doc['text'][:1000] + "..." if len(doc['text']) > 1000 else doc['text']
+                st.markdown("### Document Preview:")
+                st.text_area("Content Preview:", value=preview_text, height=300, disabled=True)
+                
+                # Add document summary using AI
+                if st.button(f"Generate Summary for {doc['filename']}", key=f"sum_{i}"):
+                    with st.spinner("Generating document summary..."):
+                        summary_query = f"Create a comprehensive summary of this document highlighting key concepts, theories, and practical applications:"
+                        summary = generate_rag_answer(summary_query, [doc])
+                        st.markdown("### AI-Generated Summary:")
+                        st.write(summary)
+
+with tab4:
+    st.title("🔍 Advanced Document Search")
+    
+    if not st.session_state.extracted_texts or not st.session_state.vector_store:
+        st.info("Please upload and process documents first to enable semantic search.")
+    else:
+        st.write("Use this section to search for specific information across all your uploaded documents using semantic search.")
+        
+        search_query = st.text_input("Enter your search query:")
+        k_results = st.slider("Number of results to show:", min_value=1, max_value=10, value=3)
+        
+        if search_query and st.button("Search Documents"):
+            with st.spinner("Searching documents..."):
+                try:
+                    # Use vector store for semantic search
+                    results = st.session_state.vector_store.similarity_search_with_score(
+                        search_query, 
+                        k=k_results
                     )
-
-
-# Main application
-def main():
-    init_session_state()
-    sidebar_ui()
-    main_content()
-
-
-if __name__ == "__main__":
-    main()
+                    
+                    if results:
+                        st.success(f"Found {len(results)} relevant document sections:")
+                        
+                        for i, (doc, score) in enumerate(results):
+                            relevance_percentage = np.exp(-float(score)) * 100  # Convert score to percentage
+                            with st.expander(f"Result {i+1} - {doc.metadata.get('source', 'Unknown')} (Relevance: {relevance_percentage:.1f}%)"):
+                                st.markdown(f"**Source:** {doc.metadata.get('source', 'Unknown')}")
+                                st.markdown(f"**Relevance Score:** {relevance_percentage:.1f}%")
+                                st.markdown("**Content:**")
+                                st.write(doc.page_content)
+                                
+                                # Add "Ask Follow-up Question" option
+                                follow_up = st.text_input("Ask a follow-up question about this section:", key=f"followup_{i}")
+                                if st.button("Get Answer", key=f"followup_btn_{i}"):
+                                    with st.spinner("Generating answer..."):
+                                        # Create a specific context for this follow-up
+                                        context_doc = [{
+                                            "filename": doc.metadata.get('source', 'Unknown'),
