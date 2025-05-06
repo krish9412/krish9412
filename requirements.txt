@@ -2,7 +2,7 @@ streamlit
 pdfplumber 
 openai 
 reportlab 
-chromadb 
+faiss
 langchain 
 requests 
 uuid
