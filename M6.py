@@ -118,7 +118,7 @@ else:
     st.info("📥 Please provide your OpenAI API key and upload PDFs to start.")
 
 # Model and role selection in sidebar
-model_choices = ["gpt-4o-mini", "gpt-4o", "gpt-4"]  # Removed gpt-4.1-nano as it may not exist
+model_choices = ["gpt-4o-mini", "gpt-4o", "gpt-4"]
 selected_model = st.sidebar.selectbox("Select OpenAI Model", model_choices, index=0)
 
 role_choices = ["Manager", "Executive", "Developer", "Designer", "Marketer", "Human Resources", "Other", "Fresher"]
@@ -147,16 +147,21 @@ def answer_with_retrieval(query, course_info=None):
         doc_retriever = st.session_state.doc_vector_db.as_retriever(search_kwargs={"k": 3})
         search_results = st.session_state.doc_vector_db.similarity_search_with_score(query, k=3)
         
-        # Check relevance of retrieved documents
+        # Check if any documents were retrieved
         if not search_results:
-            return "The query is not relevant to the uploaded documents. Please ask a question related to the document content."
+            return "No relevant documents found for this query. Please ask a question related to the uploaded document content."
         
         # Extract documents and their scores
         relevant_docs = [result[0] for result in search_results]
         scores = [result[1] for result in search_results]
         
-        # Set a threshold for relevance (lower score means more relevant in Chroma)
-        relevance_threshold = 0.8
+        # Debug: Display similarity scores to understand retrieval performance
+        st.write("**Debug: Similarity Scores for Retrieved Documents:**")
+        for i, score in enumerate(scores):
+            st.write(f"Document {i+1}: Score = {score}")
+        
+        # Set a less strict threshold for relevance (lower score means more relevant in Chroma)
+        relevance_threshold = 0.9  # Increased from 0.8 to be less strict
         if min(scores) > relevance_threshold:
             return "The query does not appear to be relevant to the uploaded documents. Please ask a question related to the document content."
         
@@ -165,13 +170,13 @@ def answer_with_retrieval(query, course_info=None):
         for doc in relevant_docs:
             doc_context += f"\nSource: {doc.metadata.get('name', 'Unknown')}\nText: {doc.page_content[:500]}...\n"
         
-        # Build the course information context (not used for employer queries)
+        # Explicitly exclude course information for employer queries
         course_details = "Course information is not used for employer queries as per the requirement."
         
         # Construct the prompt with explicit context
         full_prompt = (
             "You are an AI assistant for a professional learning platform. Provide a detailed and accurate answer to the following query "
-            "using ONLY the document excerpts provided below. Do not use any external knowledge or course information. "
+            "using ONLY the document excerpts provided below. Do not use any external knowledge, course information, or assumptions beyond the provided documents. "
             "Be thorough and reference the documents where applicable.\n\n"
             f"Query: {query}\n\n"
             f"Document Excerpts:\n{doc_context}\n\n"
@@ -219,12 +224,18 @@ if st.sidebar.button("Submit Question"):
         st.sidebar.success("Question submitted and answered!")
         st.rerun()
 
-# Function to validate quiz answers with normalization
+# Function to validate quiz answers with enhanced normalization and debugging
 def validate_answer(q_id, user_response, correct_response):
-    user_response_normalized = user_response.strip().lower() if isinstance(user_response, str) else str(user_response).strip().lower()
-    correct_response_normalized = correct_response.strip().lower() if isinstance(correct_response, str) else str(correct_response).strip().lower()
+    # Ensure both inputs are strings and normalize them
+    user_response_str = str(user_response).strip().lower() if user_response is not None else ""
+    correct_response_str = str(correct_response).strip().lower() if correct_response is not None else ""
     
-    if user_response_normalized == correct_response_normalized:
+    # Debug: Show the values being compared
+    st.write("**Debug: Answer Comparison**")
+    st.write(f"User Response (normalized): '{user_response_str}'")
+    st.write(f"Correct Answer (normalized): '{correct_response_str}'")
+    
+    if user_response_str == correct_response_str:
         st.success("🎉 Correct answer! Great job!")
         st.session_state.answered_questions.add(q_id)
         return True
@@ -353,9 +364,11 @@ def generate_course_content():
         7. Adding a quiz per module with 3-5 questions to test understanding.
         
         For each quiz question:
-        - Provide exactly 4 options (A, B, C, D).
+        - Provide exactly 4 options labeled as "A", "B", "C", "D" (e.g., ["A", "B", "C", "D"]).
+        - Ensure each option is a single letter (A, B, C, or D) with no additional text or spaces.
         - Ensure the correct_answer is exactly one of the options (e.g., "A", "B", "C", or "D").
-        - Ensure the correct_answer matches the option exactly in terms of text (e.g., if option is "A", correct_answer must be "A", not "a" or "A ").
+        - Ensure the correct_answer matches the option exactly (e.g., "A" not "a" or "A ").
+        - Ensure the correct_answer is a string, not a number or other type.
         
         Return the result in JSON format:
         {{
@@ -488,6 +501,13 @@ with content_tab:
                         with quiz_section:
                             st.markdown(f"**Question {q_idx}:** {q_text}")
                             options = q.get('options', [])
+                            
+                            # Debug: Display raw quiz data
+                            st.write("**Debug: Raw Quiz Data**")
+                            st.write(f"Question: {q_text}")
+                            st.write(f"Options: {options}")
+                            st.write(f"Correct Answer: {q.get('correct_answer', 'Not specified')}")
+                            
                             if options:
                                 option_key = f"quiz_{i}_{q_idx}"
                                 user_answer = st.radio("Select your answer:", options, key=option_key)
