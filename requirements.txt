@@ -1,8 +1,10 @@
-streamlit 
-pdfplumber 
-openai 
-reportlab 
-faiss
-langchain 
-requests 
+streamlit
+pdfplumber
+openai
+reportlab
+faiss-cpu
+langchain
+langchain-openai
+langchain-community
+requests
 uuid
