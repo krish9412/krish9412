@@ -9,4 +9,4 @@ langchain-openai
 langchain-community
 pydantic
 tiktoken
-protobuf==3.20.
+protobuf
