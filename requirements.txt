@@ -3,4 +3,4 @@ pdfplumber
 openai
 reportlab 
 langchain  
-chromadb
+faiss
