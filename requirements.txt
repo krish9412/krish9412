@@ -1,6 +1,5 @@
 streamlit
-openai
-pdfplumber
-langchain
 chromadb
-protobuf==3.20
+langchain
+pdfplumber
+reportlab
