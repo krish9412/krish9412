@@ -3,4 +3,4 @@ openai
 pdfplumber
 reportlab
 langchain
-faiss
+faiss- cpu
