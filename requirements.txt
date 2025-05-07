@@ -3,3 +3,4 @@ chromadb
 langchain
 protobuf==3.20.*
 pysqlite3-binary>=0.5.0
+
