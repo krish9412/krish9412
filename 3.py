@@ -104,7 +104,8 @@ if pdf_files and api_key:
                 splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
                 doc_chunks = splitter.split_documents(doc_list)
                 
-                embedding_model = OpenAIEmbeddings(api_key=api_key)
+                # Initialize OpenAIEmbeddings without proxies to avoid the error
+                embedding_model = OpenAIEmbeddings(api_key=api_key, model="text-embedding-ada-002")
                 # Use in-memory Chroma store for Streamlit Cloud
                 st.session_state.doc_vector_db = Chroma.from_documents(
                     documents=doc_chunks,
