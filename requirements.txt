@@ -1,5 +1,5 @@
 streamlit==1.38.0
-openai==1.51.2
+openai==1.44.1  # Downgraded to a version compatible with langchain-openai==0.2.2
 pdfplumber==0.11.4
 langchain==0.3.3
 langchain-openai==0.2.2
