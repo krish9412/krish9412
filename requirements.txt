@@ -1,9 +1,5 @@
-streamlit==1.38.0
-openai==1.44.1
-pdfplumber==0.11.4
-langchain==0.3.3
-langchain-openai==0.3.0  # Upgraded to avoid proxies issue
-langchain-community==0.3.2
-chromadb==0.4.24
-protobuf>=3.19.0,<4.0.0
-reportlab==4.2.5
+streamlit
+pdfplumber
+chromadb
+langchain
+reportlab
