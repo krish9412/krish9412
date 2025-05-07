@@ -3,6 +3,7 @@ import os
 import tempfile
 import json
 import io
+import requests
 import pdfplumber
 import uuid
 from openai import OpenAI
@@ -12,7 +13,7 @@ from datetime import datetime
 
 # LangChain imports
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS  # Using FAISS instead of Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 
@@ -42,8 +43,6 @@ if 'uploaded_file_names' not in st.session_state:
     st.session_state.uploaded_file_names = []
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
-if 'document_loaded' not in st.session_state:
-    st.session_state.document_loaded = False
 
 # Sidebars Appearance
 st.sidebar.title("🎓 Professional Learning System")
@@ -57,7 +56,6 @@ if st.sidebar.button("🔄 Reset Application"):
     st.session_state.uploaded_files = []
     st.session_state.uploaded_file_names = []
     st.session_state.vector_store = None
-    st.session_state.document_loaded = False
     st.rerun()
 
 # 🔐 OpenAI API Key Inputs
@@ -108,17 +106,15 @@ if uploaded_files and openai_api_key:
                 split_docs = text_splitter.split_documents(documents)
                 
                 embeddings = OpenAIEmbeddings(api_key=openai_api_key)
-                # Use FAISS for vector store
+                # Use FAISS instead of Chroma for better compatibility
                 st.session_state.vector_store = FAISS.from_documents(
                     documents=split_docs,
                     embedding=embeddings
                 )
-                st.session_state.document_loaded = True
             except Exception as e:
                 st.error(f"Error initializing vector store: {e}")
 else:
-    if not st.session_state.document_loaded:
-        st.info("📥 Please enter your OpenAI API key and upload PDF files to begin.")
+    st.info("📥 Please enter your OpenAI API key and upload PDF files to begin.")
 
 # 🎯 GPT Model and Role selection
 model_options = ["gpt-4.1-nano", "gpt-4o-mini", "gpt-4o", "gpt-4"]
@@ -137,68 +133,62 @@ if st.session_state.uploaded_file_names:
     for i, filename in enumerate(st.session_state.uploaded_file_names):
         st.sidebar.text(f"{i+1}. {filename}")
 
-# Enhanced RAG function using LangChain with FAISS - IMPROVED TO STAY ON TOPIC
-def generate_rag_answer(question, course_content=None):
+# Enhanced RAG function using LangChain with FAISS - MODIFIED to focus strictly on uploaded content only
+def generate_rag_answer(question):
     try:
         if not openai_api_key:
             return "API key is required to generate answers."
         
-        if not st.session_state.vector_store or not st.session_state.document_loaded:
-            return "No documents loaded. Please upload and process documents first."
+        if not st.session_state.vector_store:
+            return "Vector store not initialized. Please process documents first."
             
         # Retrieve relevant documents
-        retriever = st.session_state.vector_store.as_retriever(search_kwargs={"k": 5})  # Get top 5 most relevant documents
+        retriever = st.session_state.vector_store.as_retriever(search_kwargs={"k": 5})  # Increased k for better coverage
         retrieved_docs = retriever.get_relevant_documents(question)
         
-        # If no relevant documents were found, provide a clear message
+        # Check if we have any relevant documents
         if not retrieved_docs:
-            return "I could not find any information related to your question in the uploaded documents. Please ask something specifically related to the uploaded content or provide more context."
+            return "I couldn't find relevant information in the uploaded documents to answer this question."
         
-        # Construct the context from retrieved documents with more detail
-        # Track unique documents to prevent duplication in references
-        unique_docs = {}
+        # Construct the context from retrieved documents
         context = ""
         for i, doc in enumerate(retrieved_docs):
-            filename = doc.metadata.get('filename', 'Unknown')
-            if filename not in unique_docs:
-                unique_docs[filename] = []
-            unique_docs[filename].append(doc.page_content)
-            
-            # Include content from each document (truncate to keep prompt size reasonable)
-            context += f"\nDocument: {filename}\nContent: {doc.page_content[:800]}...\n"
+            context += f"\nDocument {i+1}: {doc.metadata.get('filename', 'Unknown')}\nContent: {doc.page_content}\n"
         
-        # Construct the prompt with strong instructions to only use document content
+        # Construct the prompt with strict instructions to use only the uploaded content
         prompt = f"""
         You are an AI assistant for a professional learning platform. Answer the following question 
-        STRICTLY based on the provided document content. Your response must be:
-        
-        1. EXCLUSIVELY based on information found in the provided documents
-        2. NOT include any general knowledge or information outside the documents
-        3. Clearly state "The documents do not contain information about this topic" if the question
-           cannot be answered using only the provided documents
-        4. NEVER make up information or provide general definitions for topics not in the documents
-        5. Be specific and provide direct quotes from the documents when possible
+        based STRICTLY on the provided document content. You must only use information found in the uploaded documents.
         
         Question: {question}
         
         Document Content: {context}
         
-        IMPORTANT: If the question is about a topic not covered in the documents, state clearly that 
-        the documents don't contain that information. DO NOT provide general knowledge responses.
+        IMPORTANT INSTRUCTIONS:
+        1. Use ONLY the information from the uploaded documents to answer the question
+        2. If the question cannot be answered based on the provided documents, say "I cannot answer this question based on the uploaded documents"
+        3. Do not use any external knowledge or information not present in the documents
+        4. Reference specific document names when providing information
+        5. If the documents contain conflicting information, mention this in your answer
+        6. Be concise and accurate
         """
         
         # Initialize the LLM with lower temperature for more factual responses
-        llm = ChatOpenAI(api_key=openai_api_key, model=selected_model, temperature=0.1)
+        llm = ChatOpenAI(api_key=openai_api_key, model=selected_model, temperature=0.2)
         
         # Call the LLM directly with the constructed prompt
         response = llm.invoke(prompt)
         answer = response.content
         
-        # Append unique references to the answer
-        if unique_docs:
-            answer += "\n\n**References:**"
-            for filename in unique_docs:
-                answer += f"\n- Document: {filename}"
+        # Append references to the answer
+        if retrieved_docs:
+            answer += "\n\n**References:**\n"
+            unique_files = set()
+            for doc in retrieved_docs:
+                filename = doc.metadata.get("filename", "Unknown")
+                unique_files.add(filename)
+            for filename in unique_files:
+                answer += f"- {filename}\n"
         
         return answer
     except Exception as e:
@@ -212,11 +202,11 @@ new_query = st.sidebar.text_area("Add a new question:", height=100)
 if st.sidebar.button("Submit Question"):
     if new_query:
         answer = ""
-        if st.session_state.vector_store and st.session_state.document_loaded:
-            with st.spinner("Generating answer..."):
+        if st.session_state.vector_store:
+            with st.spinner("Generating answer from uploaded documents..."):
                 try:
-                    current_course = st.session_state.course_content if hasattr(st.session_state, 'course_generated') and st.session_state.course_generated else None
-                    answer = generate_rag_answer(new_query, current_course)
+                    # Modified to only use uploaded content
+                    answer = generate_rag_answer(new_query)
                 except Exception as e:
                     answer = f"Error generating answer: {str(e)}"
         else:
@@ -325,7 +315,7 @@ def generate_course():
     st.session_state.course_generated = False
     st.rerun()
 
-# Function to actually generate the course content - IMPROVED FOR DOCUMENT FIDELITY
+# Function to actually generate the course content
 def perform_course_generation():
     try:
         combined_docs = ""
@@ -336,32 +326,29 @@ def perform_course_generation():
         
         professional_context = f"Role: {role}, Focus: {', '.join(learning_focus)}"
         
-        # Get document summaries first with strict instruction to use only document content
-        summary_query = "Create a factual summary of these documents highlighting only concepts, theories, and applications explicitly mentioned in the materials."
+        summary_query = "Create a comprehensive summary of these documents highlighting key concepts, theories, and practical applications across all materials."
         document_summary = generate_rag_answer(summary_query)
         
         prompt = f"""
-        Design a professional learning course based EXCLUSIVELY on the uploaded documents.
+        Design a comprehensive professional learning course based on the multiple documents provided.
         Context: {professional_context}
         Document Summary: {document_summary}
         
         Document Contents: {combined_docs[:5000]}
         
-        IMPORTANT INSTRUCTIONS:
-        1. Include ONLY information that is explicitly present in the documents
-        2. DO NOT add any concepts, examples, or applications not found in the documents
-        3. If a topic would typically be included but isn't in the documents, DON'T include it
-        4. Maintain the specific terminology used in the documents
-        5. Create modules that directly correspond to document topics
-        
-        Create a course by:
-        1. Analyzing the provided documents and identifying actual themes from the documents
-        2. Creating a course title that reflects the actual content from the documents
-        3. Writing a course description based only on what's in the documents
-        4. Developing modules that directly correspond to document sections/topics
-        5. Creating learning objectives that reflect specific document content
-        6. Using only examples and applications found in the documents
-        7. Creating quiz questions based on explicit document content
+        Create an engaging, thorough and well-structured course by:
+        1. Analyzing all provided documents and identifying common themes, complementary concepts, and unique insights from each source
+        2. Creating an inspiring course title that reflects the integrated knowledge from all documents
+        3. Writing a detailed course description (at least 300 words) that explains how the course synthesizes information from multiple sources
+        4. Developing 5-8 comprehensive modules that build upon each other in a logical sequence
+        5. Providing 4-6 clear learning objectives for each module with specific examples and practical applications
+        6. Creating detailed, well-explained content for each module (at least 500 words per module) including:
+           - Real-world examples and case studies
+           - Practical applications of concepts
+           - Visual explanations where appropriate
+           - Step-by-step guides for complex procedures
+           - Comparative analysis when sources present different perspectives
+        7. Including a quiz with 3-5 thought-provoking questions per module for better understanding
         
         Return the response in the following JSON format:
         {{
@@ -384,6 +371,10 @@ def perform_course_generation():
                 }}
             ]
         }}
+        
+        Make the content exceptionally practical, actionable, and tailored to the professional context.
+        Provide detailed explanations, real-world examples, and practical applications in each module content.
+        Where document sources provide different perspectives or approaches to the same topic, compare and contrast them.
         """
         
         client = OpenAI(api_key=openai_api_key)
@@ -391,7 +382,7 @@ def perform_course_generation():
             model=selected_model,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            temperature=0.3  # Lower temperature for more factual responses
+            temperature=0.7
         )
         
         response_content = response.choices[0].message.content
@@ -477,7 +468,7 @@ with tab1:
                         st.write("")
                 
                 st.markdown("### 💡 Key Takeaways:")
-                st.info("The content in this module is directly derived from the uploaded documents and relevant to your professional context.")
+                st.info("The content in this module will help you develop practical skills that you can apply immediately in your professional context.")
                 
                 st.markdown("### 📝 Module Quiz:")
                 quiz = module.get('quiz', {})
@@ -536,11 +527,10 @@ with tab1:
 with tab2:
     st.title("💬 Employer Queries")
     st.markdown("""
-    This section allows employers to ask questions and get AI-generated answers about the course content or related topics.
-    Submit your questions in the sidebar, and our AI will automatically generate answers based ONLY on the uploaded documents.
+    This section allows employers to ask questions and get AI-generated answers based strictly on the uploaded documents.
+    Add your questions in the sidebar, and our AI will search through the uploaded documents to find relevant information.
     
-    **Important**: The AI will only answer questions based on information found in the uploaded documents. 
-    If your question is about a topic not covered in the documents, the AI will let you know.
+    Note: The AI will only answer questions using information found in the uploaded documents. If the information isn't in the documents, it will tell you.
     """)
     
     if not st.session_state.employer_queries:
@@ -552,11 +542,11 @@ with tab2:
                 if query['answered']:
                     st.write(f"**Answer:** {query['answer']}")
                 else:
-                    st.info("Generating answer...")
-                    if st.session_state.vector_store and st.session_state.document_loaded:
+                    st.info("Generating answer from uploaded documents...")
+                    if st.session_state.vector_store:
                         try:
-                            current_course = st.session_state.course_content if hasattr(st.session_state, 'course_generated') and st.session_state.course_generated else None
-                            answer = generate_rag_answer(query['question'], current_course)
+                            # Modified to only use uploaded content
+                            answer = generate_rag_answer(query['question'])
                             st.session_state.employer_queries[i]['answer'] = answer
                             st.session_state.employer_queries[i]['answered'] = True
                             st.rerun()
@@ -566,7 +556,7 @@ with tab2:
                             st.session_state.employer_queries[i]['answer'] = error_msg
                             st.session_state.employer_queries[i]['answered'] = True
                     else:
-                        st.warning("No documents have been processed. Please upload and process documents to generate answers.")
+                        st.warning("No documents uploaded yet. Please upload documents to generate answers.")
 
 with tab3:
     st.title("📑 Document Sources")
@@ -584,7 +574,7 @@ with tab3:
                 
                 if st.button(f"Generate Summary for {doc['filename']}", key=f"sum_{i}"):
                     with st.spinner("Generating document summary..."):
-                        summary_query = f"Create a factual summary of ONLY the content found in the document '{doc['filename']}'"
+                        summary_query = f"Create a comprehensive summary of the document '{doc['filename']}' highlighting key concepts, theories, and practical applications:"
                         summary = generate_rag_answer(summary_query)
                         st.markdown("### AI-Generated Summary:")
                         st.write(summary)
