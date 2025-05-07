@@ -117,7 +117,7 @@ else:
     st.info("📥 Please enter your OpenAI API key and upload PDF files to begin.")
 
 # 🎯 GPT Model and Role selection
-model_options = ["gpt-4.1-nano", "gpt-4o-mini", "gpt-4o", "gpt-4"]
+model_options = ["gpt-4.1-nano", "gpt-4o-mini"]
 selected_model = st.sidebar.selectbox("Select OpenAI Model", model_options, index=0 if "gpt-4.1-nano" in model_options else 1)
 
 role_options = ["Manager", "Executive", "Developer", "Designer", "Marketer", "Human Resources", "Other", "Fresher"]
