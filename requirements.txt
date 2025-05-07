@@ -1,7 +1,8 @@
 streamlit
 pdfplumber
-chromadb
 langchain
 reportlab
 openai
 langchain-openai
+langchain-community
+chromadb
