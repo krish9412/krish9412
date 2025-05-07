@@ -42,6 +42,8 @@ if 'uploaded_file_names' not in st.session_state:
     st.session_state.uploaded_file_names = []
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
+if 'document_loaded' not in st.session_state:
+    st.session_state.document_loaded = False
 
 # Sidebars Appearance
 st.sidebar.title("🎓 Professional Learning System")
@@ -55,6 +57,7 @@ if st.sidebar.button("🔄 Reset Application"):
     st.session_state.uploaded_files = []
     st.session_state.uploaded_file_names = []
     st.session_state.vector_store = None
+    st.session_state.document_loaded = False
     st.rerun()
 
 # 🔐 OpenAI API Key Inputs
@@ -110,10 +113,12 @@ if uploaded_files and openai_api_key:
                     documents=split_docs,
                     embedding=embeddings
                 )
+                st.session_state.document_loaded = True
             except Exception as e:
                 st.error(f"Error initializing vector store: {e}")
 else:
-    st.info("📥 Please enter your OpenAI API key and upload PDF files to begin.")
+    if not st.session_state.document_loaded:
+        st.info("📥 Please enter your OpenAI API key and upload PDF files to begin.")
 
 # 🎯 GPT Model and Role selection
 model_options = ["gpt-4.1-nano", "gpt-4o-mini", "gpt-4o", "gpt-4"]
@@ -138,11 +143,11 @@ def generate_rag_answer(question, course_content=None):
         if not openai_api_key:
             return "API key is required to generate answers."
         
-        if not st.session_state.vector_store:
-            return "Vector store not initialized. Please process documents first."
+        if not st.session_state.vector_store or not st.session_state.document_loaded:
+            return "No documents loaded. Please upload and process documents first."
             
         # Retrieve relevant documents
-        retriever = st.session_state.vector_store.as_retriever(search_kwargs={"k": 5})  # Increased from 3 to 5 for better coverage
+        retriever = st.session_state.vector_store.as_retriever(search_kwargs={"k": 5})  # Get top 5 most relevant documents
         retrieved_docs = retriever.get_relevant_documents(question)
         
         # If no relevant documents were found, provide a clear message
@@ -150,10 +155,17 @@ def generate_rag_answer(question, course_content=None):
             return "I could not find any information related to your question in the uploaded documents. Please ask something specifically related to the uploaded content or provide more context."
         
         # Construct the context from retrieved documents with more detail
+        # Track unique documents to prevent duplication in references
+        unique_docs = {}
         context = ""
         for i, doc in enumerate(retrieved_docs):
-            # Include more context from each document (increased from 500 to 800 chars)
-            context += f"\nDocument {i+1}: {doc.metadata.get('filename', 'Unknown')}\nContent: {doc.page_content[:800]}...\n"
+            filename = doc.metadata.get('filename', 'Unknown')
+            if filename not in unique_docs:
+                unique_docs[filename] = []
+            unique_docs[filename].append(doc.page_content)
+            
+            # Include content from each document (truncate to keep prompt size reasonable)
+            context += f"\nDocument: {filename}\nContent: {doc.page_content[:800]}...\n"
         
         # Construct the prompt with strong instructions to only use document content
         prompt = f"""
@@ -165,6 +177,7 @@ def generate_rag_answer(question, course_content=None):
         3. Clearly state "The documents do not contain information about this topic" if the question
            cannot be answered using only the provided documents
         4. NEVER make up information or provide general definitions for topics not in the documents
+        5. Be specific and provide direct quotes from the documents when possible
         
         Question: {question}
         
@@ -175,18 +188,17 @@ def generate_rag_answer(question, course_content=None):
         """
         
         # Initialize the LLM with lower temperature for more factual responses
-        llm = ChatOpenAI(api_key=openai_api_key, model=selected_model, temperature=0.2)
+        llm = ChatOpenAI(api_key=openai_api_key, model=selected_model, temperature=0.1)
         
         # Call the LLM directly with the constructed prompt
         response = llm.invoke(prompt)
         answer = response.content
         
-        # Append references to the answer
-        if retrieved_docs:
-            answer += "\n\n**References:**\n"
-            for i, doc in enumerate(retrieved_docs):
-                filename = doc.metadata.get("filename", "Unknown")
-                answer += f"- Document: {filename}\n"
+        # Append unique references to the answer
+        if unique_docs:
+            answer += "\n\n**References:**"
+            for filename in unique_docs:
+                answer += f"\n- Document: {filename}"
         
         return answer
     except Exception as e:
@@ -200,7 +212,7 @@ new_query = st.sidebar.text_area("Add a new question:", height=100)
 if st.sidebar.button("Submit Question"):
     if new_query:
         answer = ""
-        if st.session_state.vector_store:
+        if st.session_state.vector_store and st.session_state.document_loaded:
             with st.spinner("Generating answer..."):
                 try:
                     current_course = st.session_state.course_content if hasattr(st.session_state, 'course_generated') and st.session_state.course_generated else None
@@ -541,7 +553,7 @@ with tab2:
                     st.write(f"**Answer:** {query['answer']}")
                 else:
                     st.info("Generating answer...")
-                    if st.session_state.vector_store:
+                    if st.session_state.vector_store and st.session_state.document_loaded:
                         try:
                             current_course = st.session_state.course_content if hasattr(st.session_state, 'course_generated') and st.session_state.course_generated else None
                             answer = generate_rag_answer(query['question'], current_course)
@@ -554,7 +566,7 @@ with tab2:
                             st.session_state.employer_queries[i]['answer'] = error_msg
                             st.session_state.employer_queries[i]['answered'] = True
                     else:
-                        st.warning("No documents uploaded yet. Please upload documents to generate answers.")
+                        st.warning("No documents have been processed. Please upload and process documents to generate answers.")
 
 with tab3:
     st.title("📑 Document Sources")
