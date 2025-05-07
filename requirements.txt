@@ -1,5 +1,4 @@
 streamlit
 chromadb
 langchain
-pdfplumber
-reportlab
+protobuf==3.20.*
