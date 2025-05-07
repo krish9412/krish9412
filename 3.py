@@ -369,11 +369,9 @@ def generate_course_content():
         7. Adding a quiz per module with 3-5 questions to test understanding.
         
         For each quiz question:
-        - Provide exactly 4 options labeled as "A", "B", "C", "D" (e.g., ["A", "B", "C", "D"]).
-        - Ensure each option is a single letter (A, B, C, or D) with no additional text or spaces.
-        - Ensure the correct_answer is exactly one of the options (e.g., "A", "B", "C", or "D").
-        - Ensure the correct_answer matches the option exactly (e.g., "A" not "a" or "A ").
-        - Ensure the correct_answer is a string, not a number or other type.
+        - Provide multiple choice options with the letters "A", "B", "C", "D" followed by the option text.
+        - Example format: ["A. Option text", "B. Option text", "C. Option text", "D. Option text"]
+        - Ensure the correct_answer is exactly one of "A", "B", "C", or "D" (just the letter).
         
         Return the result in JSON format:
         {{
@@ -388,7 +386,7 @@ def generate_course_content():
                         "questions": [
                             {{
                                 "question": "Question text?",
-                                "options": ["A", "B", "C", "D"],
+                                "options": ["A. Option text", "B. Option text", "C. Option text", "D. Option text"],
                                 "correct_answer": "A"
                             }}
                         ]
@@ -507,24 +505,43 @@ with content_tab:
                             st.markdown(f"**Question {q_idx}:** {q_text}")
                             options = q.get('options', [])
                             
-                            # Debug: Display raw quiz data
-                            st.write("**Debug: Raw Quiz Data**")
-                            st.write(f"Question: {q_text}")
-                            st.write(f"Options: {options}")
-                            st.write(f"Correct Answer: {q.get('correct_answer', 'Not specified')}")
+                            # Only show debug info in development, not in production
+                            if st.checkbox(f"Show Debug Info for Q{q_idx}", key=f"debug_{i}_{q_idx}", value=False):
+                                st.write("**Debug: Raw Quiz Data**")
+                                st.write(f"Question: {q_text}")
+                                st.write(f"Options: {options}")
+                                st.write(f"Correct Answer: {q.get('correct_answer', 'Not specified')}")
                             
                             if options:
                                 option_key = f"quiz_{i}_{q_idx}"
-                                user_answer = st.radio("Select your answer:", options, key=option_key)
-                                submit_key = f"submit_{i}_{q_idx}"
-                                if q_id in st.session_state.answered_questions:
-                                    st.success("✓ Question completed")
+                                # Make sure options are properly formatted for the radio button
+                                formatted_options = options
+                                if options and isinstance(options[0], str) and not options[0].startswith(('A', 'B', 'C', 'D')):
+                                    # If options don't have A, B, C, D prefixes, add them
+                                    formatted_options = [f"{chr(65+i)}. {opt}" for i, opt in enumerate(options)]
+                                
+                                # Ensure we have valid options before creating the radio button
+                                if formatted_options:
+                                    user_answer = st.radio(
+                                        "Select your answer:", 
+                                        formatted_options, 
+                                        key=option_key,
+                                        index=None  # No default selection
+                                    )
+                                    
+                                    submit_key = f"submit_{i}_{q_idx}"
+                                    if q_id in st.session_state.answered_questions:
+                                        st.success("✓ Question completed")
+                                    else:
+                                        if st.button(f"Check Answer", key=submit_key):
+                                            correct_answer = q.get('correct_answer', '')
+                                            # Extract just the letter if user selected a formatted option
+                                            user_letter = user_answer[0] if user_answer and len(user_answer) > 0 else ""
+                                            validate_answer(q_id, user_letter, correct_answer)
                                 else:
-                                    if st.button(f"Check Answer", key=submit_key):
-                                        correct_answer = q.get('correct_answer', '')
-                                        validate_answer(q_id, user_answer, correct_answer)
+                                    st.warning("Quiz options are not properly formatted.")
                             else:
-                                st.write("No options available for this question.")
+                                st.warning("No options available for this question.")
                         
                         st.markdown("---")
                 else:
