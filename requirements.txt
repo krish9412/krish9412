@@ -1,8 +1,0 @@
-streamlit
-pdfplumber
-langchain
-reportlab
-openai
-langchain-openai
-langchain-community
-chromadb
