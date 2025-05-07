@@ -13,12 +13,12 @@ from datetime import datetime
 
 # LangChain imports
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import FAISS  # Using FAISS instead of Chroma
+from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 
 # Page Configuration
-st.set_page_config(page_title="📚 Professional Learning Platform", layout="wide")
+st.set_page_config(page_title="📚 Employee Training System Using RAG ", layout="wide")
 
 # Initializing session state variables
 if 'course_content' not in st.session_state:
@@ -117,7 +117,7 @@ else:
     st.info("📥 Please enter your OpenAI API key and upload PDF files to begin.")
 
 # 🎯 GPT Model and Role selection
-model_options = ["gpt-4.1-nano", "gpt-4o-mini", "gpt-4o", "gpt-4"]
+model_options = ["gpt-4.1-nano"]
 selected_model = st.sidebar.selectbox("Select OpenAI Model", model_options, index=0 if "gpt-4.1-nano" in model_options else 1)
 
 role_options = ["Manager", "Executive", "Developer", "Designer", "Marketer", "Human Resources", "Other", "Fresher"]
@@ -166,7 +166,7 @@ def generate_rag_answer(question):
         
         IMPORTANT INSTRUCTIONS:
         1. Use ONLY the information from the uploaded documents to answer the question
-        2. If the question cannot be answered based on the provided documents, say "I cannot answer this question based on the uploaded documents"
+        2. If the question cannot be answered based on the provided documents, say "I can answer questions based on the uploaded documents only"
         3. Do not use any external knowledge or information not present in the documents
         4. Reference specific document names when providing information
         5. If the documents contain conflicting information, mention this in your answer
@@ -196,7 +196,7 @@ def generate_rag_answer(question):
 
 # Employee Queries Section in Sidebar
 st.sidebar.markdown("---")
-st.sidebar.subheader("💬 Employer Queries")
+st.sidebar.subheader("💬 Employee Queries")
 
 new_query = st.sidebar.text_area("Add a new question:", height=100)
 if st.sidebar.button("Submit Question"):
