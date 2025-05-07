@@ -1,0 +1,8 @@
+streamlit
+pdfplumber
+langchain
+faiss-cpu
+openai
+reportlab
+langchain-openai
+langchain-community
