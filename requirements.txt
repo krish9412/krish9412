@@ -3,3 +3,4 @@ pdfplumber
 chromadb
 langchain
 reportlab
+openai
